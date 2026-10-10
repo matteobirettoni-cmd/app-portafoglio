@@ -23,32 +23,35 @@ st.markdown(
 )
 
 
-# Funzione dati da yfinance
+# Funzione dati da yfinance (restituisce solo tipi di dati serializzabili)
 @st.cache_data(ttl=300)
 def get_ticker_data(ticker_symbol):
   try:
     t = yf.Ticker(ticker_symbol)
     hist = t.history(period="5d")
     if not hist.empty:
-      current_price = hist["Close"].iloc[-1]
-      prev_price = hist["Close"].iloc[-2] if len(hist) > 1 else current_price
-      change = ((current_price - prev_price) / prev_price) * 100
-      return current_price, change, t
+      current_price = float(hist["Close"].iloc[-1])
+      prev_price = (
+          float(hist["Close"].iloc[-2]) if len(hist) > 1 else current_price
+      )
+      change = float(((current_price - prev_price) / prev_price) * 100)
+      return current_price, change
   except Exception:
     pass
-  return None, None, None
+  return None, None
 
 
 # Funzione per prossimi dividendi
+@st.cache_data(ttl=3600)
 def get_upcoming_dividends(ticker_symbol):
   try:
     t = yf.Ticker(ticker_symbol)
     divs = t.dividends
     if not divs.empty:
-      return divs.tail(4)
+      return float(divs.iloc[-1])
   except Exception:
     pass
-  return pd.Series(dtype=float)
+  return 0.0
 
 
 # Inizializzazione Sessione
@@ -94,7 +97,7 @@ with tab_mercati:
   col1, col2 = st.columns(2)
   i = 0
   for name, sym in market_symbols.items():
-    price, change, _ = get_ticker_data(sym)
+    price, change = get_ticker_data(sym)
     if price is not None:
       is_pos = change >= 0
       card_class = "market-card-pos" if is_pos else "market-card-neg"
@@ -130,7 +133,7 @@ with tab_portafoglio:
   total_net_worth = 0
   portfolio_items = []
   for sym, data in st.session_state.portfolio.items():
-    price, _, _ = get_ticker_data(sym)
+    price, _ = get_ticker_data(sym)
     if price is None:
       price = 100.0
     valore = data["qty"] * price
@@ -197,9 +200,9 @@ with tab_portafoglio:
   total_dividends_est = 0
   div_records = []
   for sym, data in st.session_state.portfolio.items():
-    divs = get_upcoming_dividends(sym)
-    if not divs.empty:
-      annual_div_per_share = divs.iloc[-1] * (4 if len(divs) >= 4 else 1)
+    last_div = get_upcoming_dividends(sym)
+    if last_div > 0:
+      annual_div_per_share = last_div * 4
       est_div = annual_div_per_share * data["qty"]
       total_dividends_est += est_div
       div_records.append(
@@ -360,7 +363,7 @@ with tab_watchlist:
           st.rerun()
 
   for sym in st.session_state.watchlists[selected_wl]:
-    price, change, _ = get_ticker_data(sym)
+    price, change = get_ticker_data(sym)
     price_str = f"{price:,.2f} €" if price else "n.d."
     change_str = f"{change:+.2f}%" if change is not None else ""
 
