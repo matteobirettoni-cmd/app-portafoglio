@@ -45,13 +45,7 @@ def get_ticker_data(ticker_symbol):
   except Exception:
     pass
 
-  defaults = {
-      "VWCE.MI": (120.0, 0.5),
-      "SWDA.MI": (100.0, 0.3),
-      "ISP.MI": (3.5, 0.1),
-      "GOLD": (145.0, 0.2),
-  }
-  return defaults.get(clean_sym, (100.0, 0.0))
+  return 100.0, 0.0
 
 
 # Funzione per prossimi dividendi/cedole
@@ -70,32 +64,62 @@ def get_upcoming_dividends(ticker_symbol):
   return 0.0
 
 
-# Inizializzazione Sessione
+# Inizializzazione Sessione con il tuo portafoglio esatto
 if "portfolio" not in st.session_state:
   st.session_state.portfolio = {
-      "VWCE.MI": {
-          "qty": 22.0,
-          "name": "Vanguard FTSE All-World",
-          "is_bond": False,
-          "manual_price": 0.0,
-      },
-      "SWDA.MI": {
-          "qty": 87.0,
-          "name": "iShares Core MSCI World",
-          "is_bond": False,
-          "manual_price": 0.0,
-      },
       "ISP.MI": {
           "qty": 250.0,
           "name": "Intesa Sanpaolo",
           "is_bond": False,
-          "manual_price": 0.0,
+          "manual_price": 6.116,
       },
       "GOLD": {
           "qty": 10.0,
-          "name": "Amundi Physical Gold",
+          "name": "Amundi Physical Gold ETC",
           "is_bond": False,
-          "manual_price": 0.0,
+          "manual_price": 148.21,
+      },
+      "SWDA.MI": {
+          "qty": 87.0,
+          "name": "iShares Core MSCI World UCITS ETF",
+          "is_bond": False,
+          "manual_price": 131.67,
+      },
+      "XMME.MI": {
+          "qty": 15.0,
+          "name": "Xtrackers MSCI Emerging Markets",
+          "is_bond": False,
+          "manual_price": 82.998,
+      },
+      "XNDX.MI": {
+          "qty": 10.0,
+          "name": "Xtrackers NASDAQ 100",
+          "is_bond": False,
+          "manual_price": 63.88,
+      },
+      "XACT.MI": {
+          "qty": 101.0,
+          "name": "Xtrackers FTSE All-World",
+          "is_bond": False,
+          "manual_price": 9.644,
+      },
+      "XUSE.MI": {
+          "qty": 16.0,
+          "name": "Xtrackers MSCI USA",
+          "is_bond": False,
+          "manual_price": 206.2,
+      },
+      "XWLD.MI": {
+          "qty": 21.0,
+          "name": "Xtrackers MSCI World Value",
+          "is_bond": False,
+          "manual_price": 74.09,
+      },
+      "XR2K.MI": {
+          "qty": 1.0,
+          "name": "Xtrackers Russell 2000",
+          "is_bond": False,
+          "manual_price": 371.82,
       },
       "BTP-2067": {
           "qty": 14.0,
