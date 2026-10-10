@@ -244,10 +244,14 @@ with tab_portafoglio:
       }
       st.rerun()
 
-  # Visualizzazione e modifica rapida per ogni titolo in portafoglio
+  # Visualizzazione e modifica rapida compatta con icona matita
   for item in portfolio_items:
     sym = item["ticker"]
-    cols = st.columns([2, 2, 1, 1, 1])
+    edit_key = f"editing_{sym}"
+    if edit_key not in st.session_state:
+      st.session_state[edit_key] = False
+
+    cols = st.columns([2, 2, 1.3, 1, 0.7])
     with cols[0]:
       badge = (
           " <span style='color:#3fb950; font-size:10px;'>(Bond/BTP)</span>"
@@ -272,27 +276,39 @@ with tab_portafoglio:
           if item["is_bond"]
           else f"Prezzo: {item['price']:,.2f} €"
       )
-      st.markdown(p_label)
+      sub_c1, sub_c2 = st.columns([3, 1])
+      with sub_c1:
+        st.markdown(p_label, unsafe_allow_html=True)
+      with sub_c2:
+        if st.button("✏️", key=f"edit_btn_{sym}", help="Modifica prezzo/quantità"):
+          st.session_state[edit_key] = not st.session_state[edit_key]
+          st.rerun()
     with cols[3]:
       st.markdown(
-          f"Totale: **{item['valore']:,.0f} €**", unsafe_allow_html=True
+          f"Tot: **{item['valore']:,.0f} €**", unsafe_allow_html=True
       )
     with cols[4]:
-      if st.button("❌ Rimuovi", key=f"del_{sym}"):
+      if st.button("❌", key=f"del_{sym}", help="Rimuovi"):
         del st.session_state.portfolio[sym]
         st.rerun()
 
-    # Expander per modificare al volo quantità e prezzo giornaliero
-    with st.expander(f"✏️ Aggiorna valori per {sym}"):
-      col_ed1, col_ed2, col_ed3 = st.columns(3)
-      with col_ed1:
+    # Box di modifica rapida a comparsa compatta
+    if st.session_state[edit_key]:
+      st.markdown(
+          f"<div style='background-color: #161b22; padding: 12px; border-radius: 8px; border: 1px solid #30363d; margin-bottom: 10px;'>"
+          f"<p style='margin:0 0 8px 0; font-size:13px; color:#8b94e0; font-weight:bold;'>Modifica rapida: {sym}</p>"
+          f"</div>",
+          unsafe_allow_html=True,
+      )
+      ecols = st.columns([2, 2, 1])
+      with ecols[0]:
         up_qty = st.number_input(
             "Quantità / Lotti",
             value=float(item["qty"]),
             key=f"up_q_{sym}",
             step=1.0,
         )
-      with col_ed2:
+      with ecols[1]:
         up_price = st.number_input(
             "Prezzo manuale (€ o %)",
             value=float(item["manual_price"])
@@ -301,13 +317,15 @@ with tab_portafoglio:
             key=f"up_p_{sym}",
             step=0.01,
         )
-      with col_ed3:
+      with ecols[2]:
         st.write("")
         st.write("")
-        if st.button("Salva modifiche", key=f"save_{sym}"):
+        if st.button("💾 Salva", key=f"save_{sym}"):
           st.session_state.portfolio[sym]["qty"] = up_qty
           st.session_state.portfolio[sym]["manual_price"] = up_price
+          st.session_state[edit_key] = False
           st.rerun()
+
     st.divider()
 
   st.subheader("Cedole e dividendi, prossimi 12 mesi")
