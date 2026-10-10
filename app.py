@@ -23,12 +23,21 @@ st.markdown(
 )
 
 
-# Funzione dati da yfinance ultra-robusta (evita i valori nan)
+# Funzione dati da yfinance con supporto manuale per i BTP e asset non presenti su Yahoo
 @st.cache_data(ttl=300)
 def get_ticker_data(ticker_symbol):
+  # Prezzi manuali/override per BTP o titoli non presenti su yfinance
+  manual_prices = {
+      "BTP-2067": (63.85, 0.0),
+      "IT0005217390": (63.85, 0.0),
+  }
+
+  clean_sym = ticker_symbol.upper().strip()
+  if clean_sym in manual_prices:
+    return manual_prices[clean_sym]
+
   try:
-    t = yf.Ticker(ticker_symbol)
-    # Tentativo 1: history standard
+    t = yf.Ticker(clean_sym)
     hist = t.history(period="5d")
     if not hist.empty and "Close" in hist.columns:
       current_price = float(hist["Close"].iloc[-1])
@@ -39,44 +48,30 @@ def get_ticker_data(ticker_symbol):
       if not np.isnan(current_price):
         return current_price, change
 
-    # Tentativo 2: fast_info
     price = t.fast_info.get("lastPrice", None)
     if price is not None and not np.isnan(price):
       return float(price), 0.0
-
-    # Tentativo 3: yf.download di fallback
-    df = yf.download(ticker_symbol, period="5d", progress=False)
-    if not df.empty:
-      series = (
-          df["Close"].iloc[:, 0]
-          if isinstance(df["Close"], pd.DataFrame)
-          else df["Close"]
-      )
-      current_price = float(series.iloc[-1])
-      prev_price = (
-          float(series.iloc[-2]) if len(series) > 1 else current_price
-      )
-      change = float(((current_price - prev_price) / prev_price) * 100)
-      if not np.isnan(current_price):
-        return current_price, change
   except Exception:
     pass
 
-  # Fallberg di sicurezza per evitare nan (valori stimati di default se Yahoo blocca la chiamata)
+  # Fallback di sicurezza per evitare nan
   defaults = {
       "VWCE.MI": (120.0, 0.5),
       "SWDA.MI": (100.0, 0.3),
       "ISP.MI": (3.5, 0.1),
       "GOLD": (145.0, 0.2),
   }
-  return defaults.get(ticker_symbol, (50.0, 0.0))
+  return defaults.get(clean_sym, (50.0, 0.0))
 
 
-# Funzione per prossimi dividendi
+# Funzione per prossimi dividendi/cedole
 @st.cache_data(ttl=3600)
 def get_upcoming_dividends(ticker_symbol):
+  clean_sym = ticker_symbol.upper().strip()
+  if "BTP" in clean_sym or "IT000" in clean_sym:
+    return 1.4  # Cedola semestrale indicativa per BTP 2.8%
   try:
-    t = yf.Ticker(ticker_symbol)
+    t = yf.Ticker(clean_sym)
     divs = t.dividends
     if not divs.empty:
       return float(divs.iloc[-1])
@@ -85,18 +80,19 @@ def get_upcoming_dividends(ticker_symbol):
   return 0.0
 
 
-# Inizializzazione Sessione
+# Inizializzazione Sessione (incluso BTP-2067)
 if "portfolio" not in st.session_state:
   st.session_state.portfolio = {
       "VWCE.MI": {"qty": 22.0, "name": "Vanguard FTSE All-World"},
       "SWDA.MI": {"qty": 87.0, "name": "iShares Core MSCI World"},
       "ISP.MI": {"qty": 250.0, "name": "Intesa Sanpaolo"},
       "GOLD": {"qty": 10.0, "name": "Amundi Physical Gold"},
+      "BTP-2067": {"qty": 1000.0, "name": "BTP Tf 2.8% Mz67"},
   }
 
 if "watchlists" not in st.session_state:
   st.session_state.watchlists = {
-      "Da seguire": ["SWDA.MI", "ISP.MI", "AAPL", "NVDA"]
+      "Da seguire": ["SWDA.MI", "ISP.MI", "BTP-2067", "AAPL"]
   }
 
 tab_mercati, tab_portafoglio, tab_watchlist = st.tabs(
@@ -191,7 +187,9 @@ with tab_portafoglio:
   with st.form("add_position_form"):
     col_a, col_b, col_c = st.columns([2, 2, 1])
     with col_a:
-      new_ticker = st.text_input("Ticker o ISIN (es. AAPL, VWCE.MI)")
+      new_ticker = st.text_input(
+          "Ticker, ISIN o BTP-2067 (es. AAPL, BTP-2067)"
+      )
     with col_b:
       new_name = st.text_input("Nome Descrittivo")
     with col_c:
@@ -233,8 +231,10 @@ with tab_portafoglio:
   for sym, data in st.session_state.portfolio.items():
     last_div = get_upcoming_dividends(sym)
     if last_div > 0:
-      annual_div_per_share = last_div * 4
-      est_div = annual_div_per_share * data["qty"]
+      annual_div = (
+          last_div * 2 if ("BTP" in sym or "IT000" in sym) else last_div * 4
+      )
+      est_div = annual_div * data["qty"]
       total_dividends_est += est_div
       div_records.append(
           {"Titolo": sym, "Cedola/Dividendo Stimato": f"{est_div:,.2f} €"}
@@ -244,10 +244,7 @@ with tab_portafoglio:
   if div_records:
     st.dataframe(pd.DataFrame(div_records), use_container_width=True)
   else:
-    st.info(
-        "Nessun dividendo recente rilevato automaticamente per i ticker"
-        " inseriti."
-    )
+    st.info("Nessun dividendo o cedola rilevata per i titoli inseriti.")
 
   st.divider()
 
@@ -380,7 +377,7 @@ with tab_watchlist:
   with st.form("add_wl_form"):
     col_w1, col_w2 = st.columns([3, 1])
     with col_w1:
-      new_wl_ticker = st.text_input("Aggiungi Ticker (es. TSLA, ENEL.MI)")
+      new_wl_ticker = st.text_input("Aggiungi Ticker (es. BTP-2067, TSLA)")
     with col_w2:
       submitted_wl = st.form_submit_button("Aggiungi")
       if submitted_wl and new_wl_ticker:
