@@ -310,7 +310,6 @@ with tab_portafoglio:
       }
       st.rerun()
 
-  # Visualizzazione compatta con sole emoji sulla destra per ciascun titolo
   for item in portfolio_items:
     sym = item["ticker"]
     chg = item["change"]
@@ -356,7 +355,6 @@ with tab_portafoglio:
         del st.session_state.portfolio[sym]
         st.rerun()
 
-    # Box di modifica a scomparsa immediata sotto la riga
     if st.session_state[edit_key]:
       with st.container():
         st.markdown(
@@ -390,7 +388,10 @@ with tab_portafoglio:
             st.session_state[edit_key] = False
             st.rerun()
 
-    st.markdown("<hr style='margin: 4px 0; border-color: #21262d;'>", unsafe_allow_html=True)
+    st.markdown(
+        "<hr style='margin: 4px 0; border-color: #21262d;'>",
+        unsafe_allow_html=True,
+    )
 
   st.divider()
 
@@ -537,5 +538,4 @@ with tab_watchlist:
   st.markdown(
       """
         <div style="background: linear-gradient(135deg, #d97706, #78350f); padding: 25px; border-radius: 12px; margin-bottom: 20px;">
-            <h1 style="color: white; margin: 0;">Watchlist</h1>
-            <p style="color: #fef3c7; margin: 5px 0 0
+            <h1 style="color: white; margin:
