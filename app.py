@@ -538,4 +538,55 @@ with tab_watchlist:
   st.markdown(
       """
         <div style="background: linear-gradient(135deg, #d97706, #78350f); padding: 25px; border-radius: 12px; margin-bottom: 20px;">
-            <h1 style="color: white; margin:
+            <h1 style="color: white; margin: 0;">Watchlist</h1>
+            <p style="color: #fef3c7; margin: 5px 0 0 0;">Monitora i titoli di tuo interesse con prezzi in tempo reale</p>
+        </div>
+    """,
+      unsafe_allow_html=True,
+  )
+
+  selected_wl = st.selectbox(
+      "Seleziona Lista", list(st.session_state.watchlists.keys())
+  )
+
+  with st.form("add_wl_form"):
+    col_w1, col_w2 = st.columns([3, 1])
+    with col_w1:
+      new_wl_ticker = st.text_input("Aggiungi Ticker (es. BTP-2067, TSLA)")
+    with col_w2:
+      submitted_wl = st.form_submit_button("Aggiungi")
+      if submitted_wl and new_wl_ticker:
+        if (
+            new_wl_ticker.upper()
+            not in st.session_state.watchlists[selected_wl]
+        ):
+          st.session_state.watchlists[selected_wl].append(
+              new_wl_ticker.upper()
+          )
+          st.rerun()
+
+  for sym in st.session_state.watchlists[selected_wl]:
+    price, change = get_ticker_data(sym)
+    p_str = f"{price:,.2f} €" if price else "n.d."
+    c_val = change if change is not None else 0.0
+    c_sign = "+" if c_val >= 0 else ""
+    c_col = "#3fb950" if c_val >= 0 else "#f85149"
+
+    cols_w = st.columns([3.4, 0.6])
+    with cols_w[0]:
+      st.markdown(
+          f"""
+            <div style="background-color: #161b22; padding: 10px 12px; border-radius: 8px; border: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center;">
+                <div><b>{sym}</b></div>
+                <div style="text-align: right;">
+                    <b>{p_str}</b><br>
+                    <span style="color: {c_col}; font-weight: bold; font-size: 11px;">{c_sign}{c_val:.2f}%</span>
+                </div>
+            </div>
+            """,
+          unsafe_allow_html=True,
+      )
+    with cols_w[1]:
+      if st.button("❌", key=f"del_wl_{sym}", help="Rimuovi"):
+        st.session_state.watchlists[selected_wl].remove(sym)
+        st.rerun()
