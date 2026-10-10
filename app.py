@@ -9,7 +9,7 @@ st.set_page_config(
     page_title="Portfolio & Market Monitor", page_icon="📈", layout="wide"
 )
 
-# Stile CSS personalizzato per ottimizzazione mobile e tabelle scrollabili
+# Stile CSS personalizzato
 st.markdown(
     """
     <style>
@@ -17,10 +17,6 @@ st.markdown(
     .metric-card { background-color: #161b22; padding: 20px; border-radius: 12px; border: 1px solid #30363d; margin-bottom: 20px; }
     .market-card-pos { background-color: #113822; padding: 15px; border-radius: 8px; border-left: 5px solid #238636; margin-bottom: 10px; }
     .market-card-neg { background-color: #3b171c; padding: 15px; border-radius: 8px; border-left: 5px solid #da3633; margin-bottom: 10px; }
-    .table-container { width: 100%; overflow-x: auto; margin-bottom: 20px; }
-    .custom-table { width: 100%; border-collapse: collapse; background-color: #161b22; border-radius: 8px; overflow: hidden; }
-    .custom-table th { background-color: #21262d; color: #c9d1d9; padding: 12px; text-align: left; font-size: 14px; border-bottom: 1px solid #30363d; white-space: nowrap; }
-    .custom-table td { padding: 12px; color: #ffffff; font-size: 14px; border-bottom: 1px solid #30363d; white-space: nowrap; }
     </style>
 """,
     unsafe_allow_html=True,
@@ -39,8 +35,8 @@ with st.sidebar:
     st.rerun()
   st.divider()
   st.info(
-      "💡 Suggerimento: scorri la tabella del portafoglio verso destra per"
-      " vedere quantità e totali da smartphone."
+      "💡 Suggerimento: le tabelle si scrollano comodamente con un dito da"
+      " smartphone."
   )
 
 
@@ -231,6 +227,7 @@ with tab_portafoglio:
   total_net_worth = 0
   total_daily_change_eur = 0
   portfolio_items = []
+  df_list = []
 
   for sym, data in st.session_state.portfolio.items():
     manual_p = data.get("manual_price", 0.0)
@@ -264,6 +261,19 @@ with tab_portafoglio:
         "manual_price": manual_p,
     })
 
+    p_str = f"{price:.2f}%" if is_bond else f"{price:,.2f} €"
+    q_str = f"{data['qty']} lotti" if is_bond else f"{data['qty']}"
+    c_str = f"{change:+.2f}%"
+
+    df_list.append({
+        "Titolo": sym,
+        "Nome": data["name"],
+        "Var. Oggi": c_str,
+        "Prezzo": p_str,
+        "Quantità": q_str,
+        "Totale (€)": f"{valore:,.2f} €",
+    })
+
   prev_net_worth = total_net_worth - total_daily_change_eur
   portfolio_daily_pct = (
       (total_daily_change_eur / prev_net_worth) * 100
@@ -288,7 +298,7 @@ with tab_portafoglio:
       unsafe_allow_html=True,
   )
 
-  st.subheader("Posizioni in Portafoglio (Scorri a destra ➡️)")
+  st.subheader("Posizioni in Portafoglio")
 
   with st.form("add_position_form"):
     col_a, col_b, col_c, col_d, col_e = st.columns([2, 2, 1, 1, 1])
@@ -317,52 +327,9 @@ with tab_portafoglio:
       }
       st.rerun()
 
-  table_html = """
-    <div class="table-container">
-        <table class="custom-table">
-            <thead>
-                <tr>
-                    <th>Titolo / Nome</th>
-                    <th>Var. Oggi</th>
-                    <th>Prezzo</th>
-                    <th>Quantità / Lotti</th>
-                    <th>Totale (€)</th>
-                </tr>
-            </thead>
-            <tbody>
-    """
-
-  for item in portfolio_items:
-    sym = item["ticker"]
-    chg = item["change"]
-    c_sign = "+" if chg >= 0 else ""
-    c_col = "#3fb950" if chg >= 0 else "#f85149"
-    badge = " (BTP/Bond)" if item["is_bond"] else ""
-    p_display = (
-        f"{item['price']:.2f}%" if item["is_bond"] else f"{item['price']:,.2f} €"
-    )
-    q_display = (
-        f"Lotti: {item['qty']} (Nom. {item['qty']*1000:,.0f}€)"
-        if item["is_bond"]
-        else f"Qt: {item['qty']}"
-    )
-
-    table_html += f"""
-        <tr>
-            <td><b>{sym}</b>{badge}<br><span style="font-size:11px; color:#8b9499;">{item['name']}</span></td>
-            <td><span style="color: {c_col}; font-weight:bold;">{c_sign}{chg:.2f}%</span></td>
-            <td><b>{p_display}</b></td>
-            <td>{q_display}</td>
-            <td><b>{item['valore']:,.2f} €</b></td>
-        </tr>
-    """
-
-  table_html += """
-            </tbody>
-        </table>
-    </div>
-    """
-  st.markdown(table_html, unsafe_allow_html=True)
+  # Tabella nativa pulita e responsiva
+  df_portfolio = pd.DataFrame(df_list)
+  st.dataframe(df_portfolio, use_container_width=True, hide_index=True)
 
   st.markdown("##### ✏️ Gestisci / Modifica singoli titoli")
   for item in portfolio_items:
@@ -422,7 +389,9 @@ with tab_portafoglio:
 
   st.markdown(f"### Totale stimato: **{total_dividends_est:,.0f} €**")
   if div_records:
-    st.dataframe(pd.DataFrame(div_records), use_container_width=True)
+    st.dataframe(
+        pd.DataFrame(div_records), use_container_width=True, hide_index=True
+    )
   else:
     st.info("Nessun dividendo o cedola rilevata per i titoli inseriti.")
 
@@ -570,40 +539,18 @@ with tab_watchlist:
           )
           st.rerun()
 
-  wl_table_html = """
-    <div class="table-container">
-        <table class="custom-table">
-            <thead>
-                <tr>
-                    <th>Ticker</th>
-                    <th>Prezzo Attuale</th>
-                    <th>Var. Oggi</th>
-                </tr>
-            </thead>
-            <tbody>
-    """
-
+  wl_list = []
   for sym in st.session_state.watchlists[selected_wl]:
     price, change = get_ticker_data(sym)
     p_str = f"{price:,.2f} €" if price else "n.d."
     c_val = change if change is not None else 0.0
-    c_sign = "+" if c_val >= 0 else ""
-    c_col = "#3fb950" if c_val >= 0 else "#f85149"
+    c_str = f"{c_val:+.2f}%"
 
-    wl_table_html += f"""
-        <tr>
-            <td><b>{sym}</b></td>
-            <td><b>{p_str}</b></td>
-            <td><span style="color: {c_col}; font-weight:bold;">{c_sign}{c_val:.2f}%</span></td>
-        </tr>
-    """
+    wl_list.append({"Ticker": sym, "Prezzo Attuale": p_str, "Var. Oggi": c_str})
 
-  wl_table_html += """
-            </tbody>
-        </table>
-    </div>
-    """
-  st.markdown(wl_table_html, unsafe_allow_html=True)
+  if wl_list:
+    df_wl = pd.DataFrame(wl_list)
+    st.dataframe(df_wl, use_container_width=True, hide_index=True)
 
   st.markdown("##### Gestisci elementi Watchlist")
   for sym in st.session_state.watchlists[selected_wl]:
