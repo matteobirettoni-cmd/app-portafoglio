@@ -1,3 +1,5 @@
+import json
+import os
 import re
 import numpy as np
 import pandas as pd
@@ -23,49 +25,18 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Sidebar globale con pulsante di aggiornamento
-with st.sidebar:
-  st.markdown("### ⚙️ Pannello di Controllo")
-  st.write(
-      "Usa il pulsante sottostante per svuotare la cache e forzare lo scaricamento"
-      " dei prezzi freschi da Yahoo Finance."
-  )
-  if st.button("🔄 Aggiorna da Yahoo Finance", type="primary"):
-    st.cache_data.clear()
-    st.success("Dati aggiornati con successo!")
-    st.rerun()
-  st.divider()
-  st.info("💡 Usa le icone ✏️ e ❌ a fianco di ogni titolo per gestirlo.")
+# Gestione persistenza dati su file JSON locale
+PORTFOLIO_FILE = "portfolio.json"
 
 
-# Funzione dati da yfinance
-@st.cache_data(ttl=300)
-def get_ticker_data(ticker_symbol):
-  clean_sym = ticker_symbol.upper().strip()
-  try:
-    t = yf.Ticker(clean_sym)
-    hist = t.history(period="5d")
-    if not hist.empty and "Close" in hist.columns:
-      current_price = float(hist["Close"].iloc[-1])
-      prev_price = (
-          float(hist["Close"].iloc[-2]) if len(hist) > 1 else current_price
-      )
-      change = float(((current_price - prev_price) / prev_price) * 100)
-      if not np.isnan(current_price):
-        return current_price, change
-
-    price = t.fast_info.get("lastPrice", None)
-    if price is not None and not np.isnan(price):
-      return float(price), 0.0
-  except Exception:
-    pass
-
-  return 100.0, 0.0
-
-
-# Inizializzazione Sessione con il tuo portafoglio
-if "portfolio" not in st.session_state:
-  st.session_state.portfolio = {
+def load_portfolio():
+  if os.path.exists(PORTFOLIO_FILE):
+    try:
+      with open(PORTFOLIO_FILE, "r") as f:
+        return json.load(f)
+    except Exception:
+      pass
+  return {
       "ISP.MI": {
           "qty": 250.0,
           "name": "Intesa Sanpaolo",
@@ -127,6 +98,59 @@ if "portfolio" not in st.session_state:
           "manual_price": 63.85,
       },
   }
+
+
+def save_portfolio(port):
+  try:
+    with open(PORTFOLIO_FILE, "w") as f:
+      json.dump(port, f)
+  except Exception:
+    pass
+
+
+# Sidebar globale con pulsante di aggiornamento
+with st.sidebar:
+  st.markdown("### ⚙️ Pannello di Controllo")
+  st.write(
+      "Usa il pulsante sottostante per svuotare la cache e forzare lo scaricamento"
+      " dei prezzi freschi da Yahoo Finance."
+  )
+  if st.button("🔄 Aggiorna da Yahoo Finance", type="primary"):
+    st.cache_data.clear()
+    st.success("Dati aggiornati con successo!")
+    st.rerun()
+  st.divider()
+  st.info("💡 Usa le icone ✏️ e ❌ a fianco di ogni titolo per gestirlo.")
+
+
+# Funzione dati da yfinance
+@st.cache_data(ttl=300)
+def get_ticker_data(ticker_symbol):
+  clean_sym = ticker_symbol.upper().strip()
+  try:
+    t = yf.Ticker(clean_sym)
+    hist = t.history(period="5d")
+    if not hist.empty and "Close" in hist.columns:
+      current_price = float(hist["Close"].iloc[-1])
+      prev_price = (
+          float(hist["Close"].iloc[-2]) if len(hist) > 1 else current_price
+      )
+      change = float(((current_price - prev_price) / prev_price) * 100)
+      if not np.isnan(current_price):
+        return current_price, change
+
+    price = t.fast_info.get("lastPrice", None)
+    if price is not None and not np.isnan(price):
+      return float(price), 0.0
+  except Exception:
+    pass
+
+  return 100.0, 0.0
+
+
+# Inizializzazione Sessione con caricamento persistente
+if "portfolio" not in st.session_state:
+  st.session_state.portfolio = load_portfolio()
 
 if "watchlists" not in st.session_state:
   st.session_state.watchlists = {
@@ -302,6 +326,7 @@ with tab_portafoglio:
           "is_bond": new_is_bond,
           "manual_price": new_manual_price,
       }
+      save_portfolio(st.session_state.portfolio)
       st.rerun()
 
   for item in portfolio_items:
@@ -347,6 +372,7 @@ with tab_portafoglio:
     with cols[3]:
       if st.button("❌", key=f"btn_del_{sym}", help="Rimuovi"):
         del st.session_state.portfolio[sym]
+        save_portfolio(st.session_state.portfolio)
         st.rerun()
 
     if st.session_state[edit_key]:
@@ -379,6 +405,7 @@ with tab_portafoglio:
           if st.button("💾", key=f"save_{sym}", use_container_width=True):
             st.session_state.portfolio[sym]["qty"] = up_q
             st.session_state.portfolio[sym]["manual_price"] = up_p
+            save_portfolio(st.session_state.portfolio)
             st.session_state[edit_key] = False
             st.rerun()
 
