@@ -70,7 +70,7 @@ def get_upcoming_dividends(ticker_symbol):
   return 0.0
 
 
-# Inizializzazione Sessione (con supporto per prezzo manuale preimpostato)
+# Inizializzazione Sessione
 if "portfolio" not in st.session_state:
   st.session_state.portfolio = {
       "VWCE.MI": {
@@ -199,6 +199,7 @@ with tab_portafoglio:
         "price": price,
         "valore": valore,
         "is_bond": is_bond,
+        "manual_price": manual_p,
     })
 
   st.markdown(
@@ -230,7 +231,7 @@ with tab_portafoglio:
           min_value=0.0,
           value=0.0,
           step=0.01,
-          help="Se inserito (>0), l'app usa questo prezzo e ignora Yahoo Finance",
+          help="Se inserito (>0), usa questo prezzo fisso",
       )
 
     submitted = st.form_submit_button("Aggiungi Posizione")
@@ -243,7 +244,9 @@ with tab_portafoglio:
       }
       st.rerun()
 
+  # Visualizzazione e modifica rapida per ogni titolo in portafoglio
   for item in portfolio_items:
+    sym = item["ticker"]
     cols = st.columns([2, 2, 1, 1, 1])
     with cols[0]:
       badge = (
@@ -252,7 +255,7 @@ with tab_portafoglio:
           else ""
       )
       st.markdown(
-          f"**{item['ticker']}**{badge}<br><span style='font-size:12px;"
+          f"**{sym}**{badge}<br><span style='font-size:12px;"
           f" color:#8b9499;'>{item['name']}</span>",
           unsafe_allow_html=True,
       )
@@ -275,11 +278,37 @@ with tab_portafoglio:
           f"Totale: **{item['valore']:,.0f} €**", unsafe_allow_html=True
       )
     with cols[4]:
-      if st.button("❌ Rimuovi", key=f"del_{item['ticker']}"):
-        del st.session_state.portfolio[item["ticker"]]
+      if st.button("❌ Rimuovi", key=f"del_{sym}"):
+        del st.session_state.portfolio[sym]
         st.rerun()
 
-  st.divider()
+    # Expander per modificare al volo quantità e prezzo giornaliero
+    with st.expander(f"✏️ Aggiorna valori per {sym}"):
+      col_ed1, col_ed2, col_ed3 = st.columns(3)
+      with col_ed1:
+        up_qty = st.number_input(
+            "Quantità / Lotti",
+            value=float(item["qty"]),
+            key=f"up_q_{sym}",
+            step=1.0,
+        )
+      with col_ed2:
+        up_price = st.number_input(
+            "Prezzo manuale (€ o %)",
+            value=float(item["manual_price"])
+            if item["manual_price"] > 0
+            else float(item["price"]),
+            key=f"up_p_{sym}",
+            step=0.01,
+        )
+      with col_ed3:
+        st.write("")
+        st.write("")
+        if st.button("Salva modifiche", key=f"save_{sym}"):
+          st.session_state.portfolio[sym]["qty"] = up_qty
+          st.session_state.portfolio[sym]["manual_price"] = up_price
+          st.rerun()
+    st.divider()
 
   st.subheader("Cedole e dividendi, prossimi 12 mesi")
   total_dividends_est = 0
@@ -288,7 +317,7 @@ with tab_portafoglio:
     is_bond = data.get("is_bond", False)
     if is_bond:
       nominale = data["qty"] * 1000.0
-      est_div = nominale * 0.028  # 2.8% cedola
+      est_div = nominale * 0.028
     else:
       last_div = get_upcoming_dividends(sym)
       est_div = last_div * 4 * data["qty"] if last_div > 0 else 0.0
