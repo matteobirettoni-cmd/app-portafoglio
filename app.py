@@ -20,7 +20,7 @@ st.markdown(
     .market-card-pos { background-color: #113822; padding: 12px; border-radius: 8px; border-left: 4px solid #238636; margin-bottom: 8px; }
     .market-card-neg { background-color: #3b171c; padding: 12px; border-radius: 8px; border-left: 4px solid #da3633; margin-bottom: 8px; }
     
-    /* Riduce ulteriormente la dimensione dei bottoni (matita e x) per allinearli perfettamente */
+    /* Riduce la dimensione dei bottoni per allineamento compatto su mobile */
     div.stButton > button {
         padding: 2px 4px !important;
         font-size: 11px !important;
@@ -333,9 +333,12 @@ with tab_portafoglio:
       save_portfolio(st.session_state.portfolio)
       st.rerun()
 
-  st.markdown("<hr style='margin: 8px 0; border-color: #30363d;'>", unsafe_allow_html=True)
+  st.markdown(
+      "<hr style='margin: 8px 0; border-color: #30363d;'>",
+      unsafe_allow_html=True,
+  )
 
-  # Visualizzazione ottimizzata: Sinistra (Ticker + Prezzo, sotto Qt + Controvalore) | Destra (Variazione % + Bottoni piccoli)
+  # Layout: Sinistra (Ticker + Prezzo, sotto Qt + Controvalore) | Destra (Variazione % + Bottoni)
   for item in portfolio_items:
     sym = item["ticker"]
     chg = item["change"]
@@ -691,4 +694,122 @@ with tab_portafoglio:
         # Pulsante dedicato al calcolo/aggiornamento del FIRE
         if st.button("🔥 Calcola Obiettivo FIRE", type="primary"):
           if "Pessimista" in scenario_choice:
-            eff_return =
+            eff_return = weighted_return - weighted_vol
+          elif "Ottimista" in scenario_choice:
+            eff_return = weighted_return + weighted_vol
+          else:
+            eff_return = weighted_return
+
+          inf_val = (inflation_rate / 100.0) if use_inflation else 0.0
+          base_fire_target = fire_monthly_exp * 12 * (1.0 / swr_val)
+
+          val = total_net_worth
+          months_needed = 0
+          reached = False
+          target_at_reach = base_fire_target
+
+          if val >= base_fire_target:
+            reached = True
+            months_needed = 0
+          else:
+            for m in range(1, 12 * 70):
+              cur_target = base_fire_target * ((1 + inf_val) ** (m / 12.0))
+              val = val * (1 + (eff_return / 12.0)) + monthly_contrib
+              if val >= cur_target:
+                months_needed = m
+                target_at_reach = cur_target
+                reached = True
+                break
+
+          if use_inflation:
+            st.markdown(
+                f"#### 🎯 Tuo FIRE Number target (in valuta futura):"
+                f" **{target_at_reach:,.0f} €**"
+            )
+            st.caption(
+                f"Capitale in valuta attuale (senza inflazione):"
+                f" {base_fire_target:,.0f} €"
+            )
+          else:
+            st.markdown(
+                f"#### 🎯 Tuo FIRE Number target: **{base_fire_target:,.0f} €**"
+            )
+
+          if reached:
+            years_needed = months_needed / 12.0
+            retire_age = current_age + years_needed
+            success_msg = (
+                f"🎉 [{scenario_choice}] Raggiungeresti il traguardo FIRE tra"
+                f" **{years_needed:.1f} anni** (all'età di **{retire_age:.1f}"
+                " anni**)!"
+            )
+            st.success(success_msg)
+
+            progress_pct = min(1.0, total_net_worth / target_at_reach)
+            st.progress(
+                progress_pct,
+                text=(
+                    f"Progresso attuale: {total_net_worth:,.0f} € /"
+                    f" {target_at_reach:,.0f} € ({progress_pct*100:.1f}%)"
+                ),
+            )
+          else:
+            st.warning(
+                f"Con lo scenario [{scenario_choice}] e il PAC impostato, il"
+                " traguardo FIRE richiede più di 70 anni. Prova ad aumentare"
+                " l'importo del PAC."
+            )
+
+# 3. TAB WATCHLIST
+with tab_watchlist:
+  st.markdown(
+      '<div style="background: linear-gradient(135deg, #d97706, #78350f);'
+      ' padding: 20px; border-radius: 10px; margin-bottom: 15px;"><h1'
+      ' style="color: white; margin: 0; font-size: 24px;">Watchlist</h1><p'
+      ' style="color: #fef3c7; margin: 5px 0 0 0; font-size: 13px;">Monitora'
+      ' i titoli di tuo interesse</p></div>',
+      unsafe_allow_html=True,
+  )
+
+  selected_wl = st.selectbox(
+      "Seleziona Lista", list(st.session_state.watchlists.keys())
+  )
+
+  with st.form("add_wl_form"):
+    col_w1, col_w2 = st.columns([3, 1])
+    with col_w1:
+      new_wl_ticker = st.text_input("Aggiungi Ticker (es. BTP-2067, TSLA)")
+    with col_w2:
+      submitted_wl = st.form_submit_button("Aggiungi")
+      if submitted_wl and new_wl_ticker:
+        if (
+            new_wl_ticker.upper()
+            not in st.session_state.watchlists[selected_wl]
+        ):
+          st.session_state.watchlists[selected_wl].append(
+              new_wl_ticker.upper()
+          )
+          st.rerun()
+
+  for sym in st.session_state.watchlists[selected_wl]:
+    price, change = get_ticker_data(sym)
+    p_str = f"{price:,.2f} €" if price else "n.d."
+    c_val = change if change is not None else 0.0
+    c_sign = "+" if c_val >= 0 else ""
+    c_col = "#3fb950" if c_val >= 0 else "#f85149"
+
+    cols_w = st.columns([3.4, 0.6])
+    with cols_w[0]:
+      st.markdown(
+          f'<div style="background-color: #161b22; padding: 10px 12px;'
+          ' border-radius: 8px; border: 1px solid #30363d; display: flex;'
+          f' justify-content: space-between; align-items: center;"><div><b>{sym}</b></div><div'
+          f' style="text-align: right;"><b>{p_str}</b><br><span'
+          f' style="color: {c_col}; font-weight: bold; font-size:'
+          f' 11px;">{c_sign}{c_val:.2f}%</span></div></div>',
+          unsafe_allow_html=True,
+      )
+    with cols_w[1]:
+      if st.button("❌", key=f"del_wl_{sym}", help="Rimuovi"):
+        st.session_state.watchlists[selected_wl].remove(sym)
+        st.rerun()
