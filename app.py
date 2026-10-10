@@ -20,14 +20,14 @@ st.markdown(
     .market-card-pos { background-color: #113822; padding: 12px; border-radius: 8px; border-left: 4px solid #238636; margin-bottom: 8px; }
     .market-card-neg { background-color: #3b171c; padding: 12px; border-radius: 8px; border-left: 4px solid #da3633; margin-bottom: 8px; }
     
-    /* Riduce drasticamente la dimensione dei bottoni (matita e x) su mobile */
+    /* Riduce ulteriormente la dimensione dei bottoni (matita e x) per allinearli perfettamente */
     div.stButton > button {
-        padding: 2px 6px !important;
-        font-size: 12px !important;
-        min-height: 28px !important;
-        max-height: 32px !important;
+        padding: 2px 4px !important;
+        font-size: 11px !important;
+        min-height: 24px !important;
+        max-height: 28px !important;
         line-height: 1 !important;
-        border-radius: 6px !important;
+        border-radius: 4px !important;
     }
     </style>
 """,
@@ -335,7 +335,7 @@ with tab_portafoglio:
 
   st.markdown("<hr style='margin: 8px 0; border-color: #30363d;'>", unsafe_allow_html=True)
 
-  # Visualizzazione ultra-compatta ottimizzata per mobile (Ticker grande, tutto su singola riga di riepilogo + bottoni piccoli)
+  # Visualizzazione ottimizzata: Sinistra (Ticker + Prezzo, sotto Qt + Controvalore) | Destra (Variazione % + Bottoni piccoli)
   for item in portfolio_items:
     sym = item["ticker"]
     chg = item["change"]
@@ -350,16 +350,13 @@ with tab_portafoglio:
     if edit_key not in st.session_state:
       st.session_state[edit_key] = False
 
-    # Colonne snelle: Info asset | Variazione % | Matita | Elimina
-    cols = st.columns([4.3, 1.5, 0.35, 0.35], gap="small")
+    cols = st.columns([3.8, 1.3, 1.1], gap="small")
     with cols[0]:
       st.markdown(
           f"""
-            <div style="font-size: 15px; font-weight: bold; color: #ffffff; line-height: 1.2;">
-                {sym}{badge} <span style="font-size: 13px; color: #58a6ff; font-weight: bold;">{item['valore']:,.0f} €</span>
-            </div>
-            <div style="font-size: 11px; color: #8b9499; margin-top: 2px;">
-                Qt: {item['qty']} &bull; Prezzo: {p_display}
+            <div style="font-size: 14px; line-height: 1.3;">
+                <b>{sym}{badge}</b> <span style="color: #8b9499; font-size: 12px; margin-left: 6px;">{p_display}</span><br>
+                <span style="font-size: 11px; color: #c9d1d9;">Qt: {item['qty']} &bull; Tot: <b>{item['valore']:,.0f} €</b></span>
             </div>
             """,
           unsafe_allow_html=True,
@@ -374,14 +371,16 @@ with tab_portafoglio:
           unsafe_allow_html=True,
       )
     with cols[2]:
-      if st.button("✏️", key=f"btn_edit_{sym}", help="Modifica"):
-        st.session_state[edit_key] = not st.session_state[edit_key]
-        st.rerun()
-    with cols[3]:
-      if st.button("❌", key=f"btn_del_{sym}", help="Rimuovi"):
-        del st.session_state.portfolio[sym]
-        save_portfolio(st.session_state.portfolio)
-        st.rerun()
+      b_cols = st.columns(2, gap="small")
+      with b_cols[0]:
+        if st.button("✏️", key=f"btn_edit_{sym}", help="Modifica"):
+          st.session_state[edit_key] = not st.session_state[edit_key]
+          st.rerun()
+      with b_cols[1]:
+        if st.button("❌", key=f"btn_del_{sym}", help="Rimuovi"):
+          del st.session_state.portfolio[sym]
+          save_portfolio(st.session_state.portfolio)
+          st.rerun()
 
     if st.session_state[edit_key]:
       with st.container():
@@ -692,122 +691,4 @@ with tab_portafoglio:
         # Pulsante dedicato al calcolo/aggiornamento del FIRE
         if st.button("🔥 Calcola Obiettivo FIRE", type="primary"):
           if "Pessimista" in scenario_choice:
-            eff_return = weighted_return - weighted_vol
-          elif "Ottimista" in scenario_choice:
-            eff_return = weighted_return + weighted_vol
-          else:
-            eff_return = weighted_return
-
-          inf_val = (inflation_rate / 100.0) if use_inflation else 0.0
-          base_fire_target = fire_monthly_exp * 12 * (1.0 / swr_val)
-
-          val = total_net_worth
-          months_needed = 0
-          reached = False
-          target_at_reach = base_fire_target
-
-          if val >= base_fire_target:
-            reached = True
-            months_needed = 0
-          else:
-            for m in range(1, 12 * 70):
-              cur_target = base_fire_target * ((1 + inf_val) ** (m / 12.0))
-              val = val * (1 + (eff_return / 12.0)) + monthly_contrib
-              if val >= cur_target:
-                months_needed = m
-                target_at_reach = cur_target
-                reached = True
-                break
-
-          if use_inflation:
-            st.markdown(
-                f"#### 🎯 Tuo FIRE Number target (in valuta futura):"
-                f" **{target_at_reach:,.0f} €**"
-            )
-            st.caption(
-                f"Capitale in valuta attuale (senza inflazione):"
-                f" {base_fire_target:,.0f} €"
-            )
-          else:
-            st.markdown(
-                f"#### 🎯 Tuo FIRE Number target: **{base_fire_target:,.0f} €**"
-            )
-
-          if reached:
-            years_needed = months_needed / 12.0
-            retire_age = current_age + years_needed
-            success_msg = (
-                f"🎉 [{scenario_choice}] Raggiungeresti il traguardo FIRE tra"
-                f" **{years_needed:.1f} anni** (all'età di **{retire_age:.1f}"
-                " anni**)!"
-            )
-            st.success(success_msg)
-
-            progress_pct = min(1.0, total_net_worth / target_at_reach)
-            st.progress(
-                progress_pct,
-                text=(
-                    f"Progresso attuale: {total_net_worth:,.0f} € /"
-                    f" {target_at_reach:,.0f} € ({progress_pct*100:.1f}%)"
-                ),
-            )
-          else:
-            st.warning(
-                f"Con lo scenario [{scenario_choice}] e il PAC impostato, il"
-                " traguardo FIRE richiede più di 70 anni. Prova ad aumentare"
-                " l'importo del PAC."
-            )
-
-# 3. TAB WATCHLIST
-with tab_watchlist:
-  st.markdown(
-      '<div style="background: linear-gradient(135deg, #d97706, #78350f);'
-      ' padding: 20px; border-radius: 10px; margin-bottom: 15px;"><h1'
-      ' style="color: white; margin: 0; font-size: 24px;">Watchlist</h1><p'
-      ' style="color: #fef3c7; margin: 5px 0 0 0; font-size: 13px;">Monitora'
-      ' i titoli di tuo interesse</p></div>',
-      unsafe_allow_html=True,
-  )
-
-  selected_wl = st.selectbox(
-      "Seleziona Lista", list(st.session_state.watchlists.keys())
-  )
-
-  with st.form("add_wl_form"):
-    col_w1, col_w2 = st.columns([3, 1])
-    with col_w1:
-      new_wl_ticker = st.text_input("Aggiungi Ticker (es. BTP-2067, TSLA)")
-    with col_w2:
-      submitted_wl = st.form_submit_button("Aggiungi")
-      if submitted_wl and new_wl_ticker:
-        if (
-            new_wl_ticker.upper()
-            not in st.session_state.watchlists[selected_wl]
-        ):
-          st.session_state.watchlists[selected_wl].append(
-              new_wl_ticker.upper()
-          )
-          st.rerun()
-
-  for sym in st.session_state.watchlists[selected_wl]:
-    price, change = get_ticker_data(sym)
-    p_str = f"{price:,.2f} €" if price else "n.d."
-    c_val = change if change is not None else 0.0
-    c_sign = "+" if c_val >= 0 else ""
-    c_col = "#3fb950" if c_val >= 0 else "#f85149"
-
-    cols_w = st.columns([3.4, 0.6])
-    with cols_w[0]:
-      st.markdown(
-          f'<div style="background-color: #161b22; padding: 10px 12px;'
-          ' border-radius: 8px; border: 1px solid #30363d; display: flex;'
-          f' justify-content: space-between; align-items: center;"><div><b>{sym}</b></div><div'
-          f' style="text-align: right;"><b>{p_str}</b><br><span'
-          f' style="color: {c_col}; font-weight: bold; font-size:'
-          f' 11px;">{c_sign}{c_val:.2f}%</span></div></div>',
-          unsafe_allow_html=True,
-      )
-    with cols_w[1]:
-      if st.button("❌", key=f"del_wl_{sym}", help="Rimuovi"):
-        st.session_state.watchlists[selected_wl].remove(sym)
-        st.rerun()
+            eff_return =
