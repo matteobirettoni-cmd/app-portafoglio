@@ -20,22 +20,14 @@ st.markdown(
     .market-card-pos { background-color: #113822; padding: 12px; border-radius: 8px; border-left: 4px solid #238636; margin-bottom: 8px; }
     .market-card-neg { background-color: #3b171c; padding: 12px; border-radius: 8px; border-left: 4px solid #da3633; margin-bottom: 8px; }
     
-    /* Stile per i mini-pulsanti d'azione inline */
-    .inline-btn-form { display: inline-block; margin: 0; padding: 0; }
-    .inline-btn-form button {
+    /* Stile per i mini-pulsanti d'azione */
+    div.stButton > button {
         padding: 2px 5px !important;
         font-size: 11px !important;
-        min-height: 22px !important;
-        max-height: 26px !important;
+        min-height: 24px !important;
+        max-height: 28px !important;
         line-height: 1 !important;
         border-radius: 4px !important;
-        background-color: #21262d !important;
-        color: #c9d1d9 !important;
-        border: 1px solid #30363d !important;
-    }
-    .inline-btn-form button:hover {
-        background-color: #30363d !important;
-        color: #ffffff !important;
     }
     </style>
 """,
@@ -137,7 +129,10 @@ with st.sidebar:
     st.success("Dati aggiornati con successo!")
     st.rerun()
   st.divider()
-  st.info("💡 Usa le icone ✏️ e ❌ a fianco di ogni titolo per gestirlo.")
+  st.info(
+      "💡 Clicca sulla matita ✏️ a fianco di ogni titolo per aprirne la gestione"
+      " e le opzioni."
+  )
 
 
 # Funzione dati da yfinance
@@ -346,7 +341,7 @@ with tab_portafoglio:
       unsafe_allow_html=True,
   )
 
-  # Layout a 2 colonne in cui a destra inseriamo un blocco flessibile forzato sulla stessa riga
+  # Layout: Sinistra (Ticker + Prezzo, sotto Qt + Controvalore) | Centro (Variazione %) | Destra (Solo Matita)
   for item in portfolio_items:
     sym = item["ticker"]
     chg = item["change"]
@@ -361,7 +356,7 @@ with tab_portafoglio:
     if edit_key not in st.session_state:
       st.session_state[edit_key] = False
 
-    cols = st.columns([3.8, 2.2], gap="small")
+    cols = st.columns([3.5, 1.8, 0.7], gap="small")
     with cols[0]:
       st.markdown(
           f"""
@@ -373,36 +368,29 @@ with tab_portafoglio:
           unsafe_allow_html=True,
       )
     with cols[1]:
-      # Contenitore flessibile HTML per mantenere percentuale, matita e X rigorosamente sulla stessa riga a destra
       st.markdown(
           f"""
-            <div style="display: flex; justify-content: flex-end; align-items: center; gap: 6px; padding-top: 4px;">
-                <span style="font-size: 12px; font-weight: bold; color: {c_col};">{c_sign}{chg:.2f}%</span>
+            <div style="text-align: center; font-size: 13px; font-weight: bold; color: {c_col}; padding-top: 6px;">
+                {c_sign}{chg:.2f}%
             </div>
             """,
           unsafe_allow_html=True,
       )
-      # Bottoni inline affiancati tramite colonne minuscole e senza margini
-      b1, b2 = st.columns(2, gap="small")
-      with b1:
-        if st.button("✏️", key=f"btn_edit_{sym}", help="Modifica"):
-          st.session_state[edit_key] = not st.session_state[edit_key]
-          st.rerun()
-      with b2:
-        if st.button("❌", key=f"btn_del_{sym}", help="Rimuovi"):
-          del st.session_state.portfolio[sym]
-          save_portfolio(st.session_state.portfolio)
-          st.rerun()
+    with cols[2]:
+      if st.button("✏️", key=f"btn_edit_{sym}", help="Gestisci / Modifica"):
+        st.session_state[edit_key] = not st.session_state[edit_key]
+        st.rerun()
 
+    # Pannello a comparsa con Modifica e Pulsante X di eliminazione
     if st.session_state[edit_key]:
       with st.container():
         st.markdown(
-            f"<div style='background-color: #161b22; padding: 8px; border-radius: 6px; border: 1px solid #30363d; margin: 4px 0;'>"
-            f"<span style='font-size:12px; color:#8b94e0; font-weight:bold;'>Modifica {sym}</span>"
+            f"<div style='background-color: #161b22; padding: 10px; border-radius: 6px; border: 1px solid #30363d; margin: 4px 0;'>"
+            f"<span style='font-size:12px; color:#8b94e0; font-weight:bold;'>Gestione {sym}</span>"
             f"</div>",
             unsafe_allow_html=True,
         )
-        ec1, ec2, ec3 = st.columns([2, 2, 1])
+        ec1, ec2 = st.columns(2)
         with ec1:
           up_q = st.number_input(
               "Qt / Lotti",
@@ -419,13 +407,21 @@ with tab_portafoglio:
           up_p = st.number_input(
               "Prezzo (€ o %)", value=default_p, key=f"p_{sym}", step=0.01
           )
-        with ec3:
-          st.write("")
+
+        sub_c1, sub_c2 = st.columns(2)
+        with sub_c1:
           if st.button("💾 Salva", key=f"save_{sym}", use_container_width=True):
             st.session_state.portfolio[sym]["qty"] = up_q
             st.session_state.portfolio[sym]["manual_price"] = up_p
             save_portfolio(st.session_state.portfolio)
             st.session_state[edit_key] = False
+            st.rerun()
+        with sub_c2:
+          if st.button(
+              "❌ Elimina Titolo", key=f"del_{sym}", use_container_width=True
+          ):
+            del st.session_state.portfolio[sym]
+            save_portfolio(st.session_state.portfolio)
             st.rerun()
 
     st.markdown(
