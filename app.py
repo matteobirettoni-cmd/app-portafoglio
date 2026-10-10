@@ -246,4 +246,130 @@ with tab_portafoglio:
     simulations[0, :] = total_net_worth
 
     for m in range(1, months):
-      rand_normals = np.
+      rand_normals = np.random.normal(0, 1, n_sims)
+      growth = (
+          simulations[m - 1, :]
+          * (
+              1
+              + expected_return * dt
+              + volatility * np.sqrt(dt) * rand_normals
+          )
+          + monthly_contrib
+      )
+      simulations[m, :] = growth
+
+    pessimistic = np.percentile(simulations, 10, axis=1)
+    neutral = np.percentile(simulations, 50, axis=1)
+    optimistic = np.percentile(simulations, 90, axis=1)
+    invested_capital = [
+        total_net_worth + (monthly_contrib * m) for m in range(months)
+    ]
+
+    col_res1, col_res2, col_res3 = st.columns(3)
+    col_res1.metric(
+        "Pessimista (10° perc.)", f"{pessimistic[-1]:,.0f} €".replace(",", ".")
+    )
+    col_res2.metric(
+        "Neutro (Mediana)", f"{neutral[-1]:,.0f} €".replace(",", ".")
+    )
+    col_res3.metric(
+        "Ottimista (90° perc.)", f"{optimistic[-1]:,.0f} €".replace(",", ".")
+    )
+
+    fig = go.Figure()
+    x_axis = np.arange(months) / 12
+    fig.add_trace(
+        go.Scatter(
+            x=x_axis,
+            y=optimistic,
+            mode="lines",
+            name="Ottimista (90°)",
+            line=dict(color="#238636"),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x_axis,
+            y=neutral,
+            mode="lines",
+            name="Neutro (50°)",
+            line=dict(color="#1f6feb", width=3),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x_axis,
+            y=pessimistic,
+            mode="lines",
+            name="Pessimista (10°)",
+            line=dict(color="#da3633"),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x_axis,
+            y=invested_capital,
+            mode="lines",
+            name="Capitale Versato",
+            line=dict(dash="dash", color="#8b9499"),
+        )
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#161b22",
+        plot_bgcolor="#161b22",
+        xaxis_title="Anni",
+        yaxis_title="Valore (€)",
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+        ),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+# 3. TAB WATCHLIST
+with tab_watchlist:
+  st.markdown(
+      """
+        <div style="background: linear-gradient(135deg, #d97706, #78350f); padding: 25px; border-radius: 12px; margin-bottom: 20px;">
+            <h1 style="color: white; margin: 0;">Watchlist</h1>
+            <p style="color: #fef3c7; margin: 5px 0 0 0;">Monitora i titoli di tuo interesse con prezzi in tempo reale</p>
+        </div>
+    """,
+      unsafe_allow_html=True,
+  )
+
+  selected_wl = st.selectbox(
+      "Seleziona Lista", list(st.session_state.watchlists.keys())
+  )
+
+  with st.form("add_wl_form"):
+    col_w1, col_w2 = st.columns([3, 1])
+    with col_w1:
+      new_wl_ticker = st.text_input("Aggiungi Ticker (es. TSLA, ENEL.MI)")
+    with col_w2:
+      submitted_wl = st.form_submit_button("Aggiungi")
+      if submitted_wl and new_wl_ticker:
+        if (
+            new_wl_ticker.upper()
+            not in st.session_state.watchlists[selected_wl]
+        ):
+          st.session_state.watchlists[selected_wl].append(
+              new_wl_ticker.upper()
+          )
+          st.rerun()
+
+  for sym in st.session_state.watchlists[selected_wl]:
+    price, change, _ = get_ticker_data(sym)
+    price_str = f"{price:,.2f} €" if price else "n.d."
+    change_str = f"{change:+.2f}%" if change is not None else ""
+
+    cols = st.columns([3, 2, 1])
+    with cols[0]:
+      st.markdown(f"**{sym}**")
+    with cols[1]:
+      st.markdown(f"{price_str} ({change_str})")
+    with cols[2]:
+      if st.button("❌", key=f"del_wl_{sym}"):
+        st.session_state.watchlists[selected_wl].remove(sym)
+        st.rerun()
