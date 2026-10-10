@@ -377,4 +377,5 @@ with tab_portafoglio:
             step=1.0,
         )
       with ecols[1]:
-        up_price = st.
+        up_price = st.number_input(
+            "
