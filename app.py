@@ -9,14 +9,14 @@ st.set_page_config(
     page_title="Portfolio & Market Monitor", page_icon="📈", layout="wide"
 )
 
-# Stile CSS personalizzato
+# Stile CSS personalizzato per ottimizzazione mobile
 st.markdown(
     """
     <style>
     .stApp { background-color: #0e1117; color: #ffffff; }
-    .metric-card { background-color: #161b22; padding: 20px; border-radius: 12px; border: 1px solid #30363d; margin-bottom: 20px; }
     .market-card-pos { background-color: #113822; padding: 15px; border-radius: 8px; border-left: 5px solid #238636; margin-bottom: 10px; }
     .market-card-neg { background-color: #3b171c; padding: 15px; border-radius: 8px; border-left: 5px solid #da3633; margin-bottom: 10px; }
+    .asset-row { background-color: #161b22; padding: 12px; border-radius: 8px; border: 1px solid #30363d; margin-bottom: 8px; }
     </style>
 """,
     unsafe_allow_html=True,
@@ -35,8 +35,8 @@ with st.sidebar:
     st.rerun()
   st.divider()
   st.info(
-      "💡 Suggerimento: le tabelle si scrollano comodamente con un dito da"
-      " smartphone."
+      "💡 Suggerimento: usa l'icona ✏️ accanto a ciascun titolo per modificarne"
+      " rapidamente prezzo o quantità."
   )
 
 
@@ -227,7 +227,6 @@ with tab_portafoglio:
   total_net_worth = 0
   total_daily_change_eur = 0
   portfolio_items = []
-  df_list = []
 
   for sym, data in st.session_state.portfolio.items():
     manual_p = data.get("manual_price", 0.0)
@@ -259,19 +258,6 @@ with tab_portafoglio:
         "valore": valore,
         "is_bond": is_bond,
         "manual_price": manual_p,
-    })
-
-    p_str = f"{price:.2f}%" if is_bond else f"{price:,.2f} €"
-    q_str = f"{data['qty']} lotti" if is_bond else f"{data['qty']}"
-    c_str = f"{change:+.2f}%"
-
-    df_list.append({
-        "Titolo": sym,
-        "Nome": data["name"],
-        "Var. Oggi": c_str,
-        "Prezzo": p_str,
-        "Quantità": q_str,
-        "Totale (€)": f"{valore:,.2f} €",
     })
 
   prev_net_worth = total_net_worth - total_daily_change_eur
@@ -309,251 +295,3 @@ with tab_portafoglio:
     with col_c:
       new_qty = st.number_input(
           "Quantità / Lotti", min_value=0.0, value=1.0, step=1.0
-      )
-    with col_d:
-      new_is_bond = st.checkbox("Obbligazione/BTP?")
-    with col_e:
-      new_manual_price = st.number_input(
-          "Prezzo Man. (€ o %)", min_value=0.0, value=0.0, step=0.01
-      )
-
-    submitted = st.form_submit_button("Aggiungi Posizione")
-    if submitted and new_ticker:
-      st.session_state.portfolio[new_ticker.upper()] = {
-          "qty": new_qty,
-          "name": new_name or new_ticker,
-          "is_bond": new_is_bond,
-          "manual_price": new_manual_price,
-      }
-      st.rerun()
-
-  # Tabella nativa pulita e responsiva
-  df_portfolio = pd.DataFrame(df_list)
-  st.dataframe(df_portfolio, use_container_width=True, hide_index=True)
-
-  st.markdown("##### ✏️ Gestisci / Modifica singoli titoli")
-  for item in portfolio_items:
-    sym = item["ticker"]
-    with st.expander(f"Modifica {sym} - {item['name']}"):
-      ecols = st.columns([2, 2, 1, 1])
-      with ecols[0]:
-        up_qty = st.number_input(
-            "Quantità / Lotti",
-            value=float(item["qty"]),
-            key=f"up_q_{sym}",
-            step=1.0,
-        )
-      with ecols[1]:
-        default_price = (
-            float(item["manual_price"])
-            if item["manual_price"] > 0
-            else float(item["price"])
-        )
-        up_price = st.number_input(
-            "Prezzo manuale (€ o %)",
-            value=default_price,
-            key=f"up_p_{sym}",
-            step=0.01,
-        )
-      with ecols[2]:
-        st.write("")
-        if st.button("💾 Salva", key=f"save_{sym}"):
-          st.session_state.portfolio[sym]["qty"] = up_qty
-          st.session_state.portfolio[sym]["manual_price"] = up_price
-          st.rerun()
-      with ecols[3]:
-        st.write("")
-        if st.button("❌ Rimuovi", key=f"del_{sym}"):
-          del st.session_state.portfolio[sym]
-          st.rerun()
-
-  st.divider()
-
-  st.subheader("Cedole e dividendi, prossimi 12 mesi")
-  total_dividends_est = 0
-  div_records = []
-  for sym, data in st.session_state.portfolio.items():
-    is_bond = data.get("is_bond", False)
-    if is_bond:
-      nominale = data["qty"] * 1000.0
-      est_div = nominale * 0.028
-    else:
-      last_div = get_upcoming_dividends(sym)
-      est_div = last_div * 4 * data["qty"] if last_div > 0 else 0.0
-
-    if est_div > 0:
-      total_dividends_est += est_div
-      div_records.append(
-          {"Titolo": sym, "Cedola/Dividendo Stimato": f"{est_div:,.2f} €"}
-      )
-
-  st.markdown(f"### Totale stimato: **{total_dividends_est:,.0f} €**")
-  if div_records:
-    st.dataframe(
-        pd.DataFrame(div_records), use_container_width=True, hide_index=True
-    )
-  else:
-    st.info("Nessun dividendo o cedola rilevata per i titoli inseriti.")
-
-  st.divider()
-
-  st.subheader("Simulatore Monte Carlo con PAC")
-  col_m1, col_m2, col_m3 = st.columns(3)
-  with col_m1:
-    pac_amount = st.number_input("Importo PAC (€)", value=300)
-  with col_m2:
-    pac_freq = st.selectbox(
-        "Frequenza", ["Mensile", "Settimanale", "Trimestrale"]
-    )
-  with col_m3:
-    years = st.number_input("Anni", min_value=1, max_value=40, value=20)
-
-  if st.button("🚀 Simula (3.000 scenari)", type="primary"):
-    np.random.seed(42)
-    n_sims = 3000
-    months = int(years * 12)
-    monthly_contrib = (
-        pac_amount
-        if pac_freq == "Mensile"
-        else (pac_amount * 4 if pac_freq == "Settimanale" else pac_amount / 3)
-    )
-
-    expected_return = 0.073
-    volatility = 0.157
-    dt = 1 / 12
-
-    simulations = np.zeros((months, n_sims))
-    simulations[0, :] = total_net_worth
-
-    for m in range(1, months):
-      rand_normals = np.random.normal(0, 1, n_sims)
-      growth = (
-          simulations[m - 1, :]
-          * (
-              1
-              + expected_return * dt
-              + volatility * np.sqrt(dt) * rand_normals
-          )
-          + monthly_contrib
-      )
-      simulations[m, :] = growth
-
-    pessimistic = np.percentile(simulations, 10, axis=1)
-    neutral = np.percentile(simulations, 50, axis=1)
-    optimistic = np.percentile(simulations, 90, axis=1)
-    invested_capital = [
-        total_net_worth + (monthly_contrib * m) for m in range(months)
-    ]
-
-    col_res1, col_res2, col_res3 = st.columns(3)
-    col_res1.metric(
-        "Pessimista (10° perc.)", f"{pessimistic[-1]:,.0f} €".replace(",", ".")
-    )
-    col_res2.metric(
-        "Neutro (Mediana)", f"{neutral[-1]:,.0f} €".replace(",", ".")
-    )
-    col_res3.metric(
-        "Ottimista (90° perc.)", f"{optimistic[-1]:,.0f} €".replace(",", ".")
-    )
-
-    fig = go.Figure()
-    x_axis = np.arange(months) / 12
-    fig.add_trace(
-        go.Scatter(
-            x=x_axis,
-            y=optimistic,
-            mode="lines",
-            name="Ottimista (90°)",
-            line=dict(color="#238636"),
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=x_axis,
-            y=neutral,
-            mode="lines",
-            name="Neutro (50°)",
-            line=dict(color="#1f6feb", width=3),
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=x_axis,
-            y=pessimistic,
-            mode="lines",
-            name="Pessimista (10°)",
-            line=dict(color="#da3633"),
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=x_axis,
-            y=invested_capital,
-            mode="lines",
-            name="Capitale Versato",
-            line=dict(dash="dash", color="#8b9499"),
-        )
-    )
-
-    fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="#161b22",
-        plot_bgcolor="#161b22",
-        xaxis_title="Anni",
-        yaxis_title="Valore (€)",
-        legend=dict(
-            orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
-        ),
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-# 3. TAB WATCHLIST
-with tab_watchlist:
-  st.markdown(
-      """
-        <div style="background: linear-gradient(135deg, #d97706, #78350f); padding: 25px; border-radius: 12px; margin-bottom: 20px;">
-            <h1 style="color: white; margin: 0;">Watchlist</h1>
-            <p style="color: #fef3c7; margin: 5px 0 0 0;">Monitora i titoli di tuo interesse con prezzi in tempo reale</p>
-        </div>
-    """,
-      unsafe_allow_html=True,
-  )
-
-  selected_wl = st.selectbox(
-      "Seleziona Lista", list(st.session_state.watchlists.keys())
-  )
-
-  with st.form("add_wl_form"):
-    col_w1, col_w2 = st.columns([3, 1])
-    with col_w1:
-      new_wl_ticker = st.text_input("Aggiungi Ticker (es. BTP-2067, TSLA)")
-    with col_w2:
-      submitted_wl = st.form_submit_button("Aggiungi")
-      if submitted_wl and new_wl_ticker:
-        if (
-            new_wl_ticker.upper()
-            not in st.session_state.watchlists[selected_wl]
-        ):
-          st.session_state.watchlists[selected_wl].append(
-              new_wl_ticker.upper()
-          )
-          st.rerun()
-
-  wl_list = []
-  for sym in st.session_state.watchlists[selected_wl]:
-    price, change = get_ticker_data(sym)
-    p_str = f"{price:,.2f} €" if price else "n.d."
-    c_val = change if change is not None else 0.0
-    c_str = f"{c_val:+.2f}%"
-
-    wl_list.append({"Ticker": sym, "Prezzo Attuale": p_str, "Var. Oggi": c_str})
-
-  if wl_list:
-    df_wl = pd.DataFrame(wl_list)
-    st.dataframe(df_wl, use_container_width=True, hide_index=True)
-
-  st.markdown("##### Gestisci elementi Watchlist")
-  for sym in st.session_state.watchlists[selected_wl]:
-    if st.button(f"❌ Rimuovi {sym}", key=f"del_wl_{sym}"):
-      st.session_state.watchlists[selected_wl].remove(sym)
-      st.rerun()
