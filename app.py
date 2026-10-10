@@ -20,12 +20,12 @@ st.markdown(
     .market-card-pos { background-color: #113822; padding: 12px; border-radius: 8px; border-left: 4px solid #238636; margin-bottom: 8px; }
     .market-card-neg { background-color: #3b171c; padding: 12px; border-radius: 8px; border-left: 4px solid #da3633; margin-bottom: 8px; }
     
-    /* Riduce la dimensione dei bottoni per allineamento compatto su mobile */
+    /* Riduce la dimensione dei bottoni per allineamento compatto sulla stessa riga */
     div.stButton > button {
-        padding: 2px 4px !important;
-        font-size: 11px !important;
-        min-height: 24px !important;
-        max-height: 28px !important;
+        padding: 1px 3px !important;
+        font-size: 10px !important;
+        min-height: 22px !important;
+        max-height: 26px !important;
         line-height: 1 !important;
         border-radius: 4px !important;
     }
@@ -338,7 +338,7 @@ with tab_portafoglio:
       unsafe_allow_html=True,
   )
 
-  # Layout: Sinistra (Ticker + Prezzo, sotto Qt + Controvalore) | Destra (Variazione % + Bottoni)
+  # Layout ultracompatto: proporzioni ristrette per mantenere i bottoni sulla stessa riga
   for item in portfolio_items:
     sym = item["ticker"]
     chg = item["change"]
@@ -353,13 +353,13 @@ with tab_portafoglio:
     if edit_key not in st.session_state:
       st.session_state[edit_key] = False
 
-    cols = st.columns([3.8, 1.3, 1.1], gap="small")
+    cols = st.columns([3.4, 1.1, 1.1], gap="small")
     with cols[0]:
       st.markdown(
           f"""
-            <div style="font-size: 14px; line-height: 1.3;">
-                <b>{sym}{badge}</b> <span style="color: #8b9499; font-size: 12px; margin-left: 6px;">{p_display}</span><br>
-                <span style="font-size: 11px; color: #c9d1d9;">Qt: {item['qty']} &bull; Tot: <b>{item['valore']:,.0f} €</b></span>
+            <div style="font-size: 13px; line-height: 1.2;">
+                <b>{sym}{badge}</b> <span style="color: #8b9499; font-size: 11px;">{p_display}</span><br>
+                <span style="font-size: 11px; color: #c9d1d9;">Qt: {item['qty']} | Tot: <b>{item['valore']:,.0f} €</b></span>
             </div>
             """,
           unsafe_allow_html=True,
@@ -367,7 +367,7 @@ with tab_portafoglio:
     with cols[1]:
       st.markdown(
           f"""
-            <div style="text-align: right; font-size: 13px; font-weight: bold; color: {c_col}; padding-top: 4px;">
+            <div style="text-align: right; font-size: 12px; font-weight: bold; color: {c_col}; padding-top: 4px;">
                 {c_sign}{chg:.2f}%
             </div>
             """,
