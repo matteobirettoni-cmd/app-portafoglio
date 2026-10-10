@@ -171,12 +171,10 @@ market_symbols = {
 
 # 1. TAB MERCATI
 with tab_mercati:
-  # Calcolo sentiment mercati per decidere il colore dello sfondo
   pos_count = 0
   tot_count = 0
   evaluated_markets = []
-  for name, sym in market_symbols.items]:  # type: ignore
-    pass  # handled below properly
+
   for name, sym in market_symbols.items():
     p, c = get_ticker_data(sym)
     if c is not None:
@@ -230,7 +228,6 @@ with tab_mercati:
 
 # 2. TAB PORTAFOGLIO
 with tab_portafoglio:
-  # Calcoli portafoglio e variazioni giornaliere
   total_net_worth = 0
   total_daily_change_eur = 0
   portfolio_items = []
@@ -274,7 +271,6 @@ with tab_portafoglio:
       else 0.0
   )
 
-  # Header Patrimonio Totale con variazione percentuale giornaliera
   chg_sign = "+" if total_daily_change_eur >= 0 else ""
   chg_color = "#3fb950" if total_daily_change_eur >= 0 else "#f85149"
 
@@ -294,7 +290,6 @@ with tab_portafoglio:
 
   st.subheader("Posizioni in Portafoglio (Scorri a destra ➡️)")
 
-  # Form di aggiunta posizione
   with st.form("add_position_form"):
     col_a, col_b, col_c, col_d, col_e = st.columns([2, 2, 1, 1, 1])
     with col_a:
@@ -322,7 +317,6 @@ with tab_portafoglio:
       }
       st.rerun()
 
-  # Tabella scrollabile orizzontalmente per mobile (Ticker, Variazione %, Prezzo in evidenza, poi scrollabile a destra)
   table_html = """
     <div class="table-container">
         <table class="custom-table">
@@ -333,7 +327,6 @@ with tab_portafoglio:
                     <th>Prezzo</th>
                     <th>Quantità / Lotti</th>
                     <th>Totale (€)</th>
-                    <th>Azioni</th>
                 </tr>
             </thead>
             <tbody>
@@ -361,7 +354,6 @@ with tab_portafoglio:
             <td><b>{p_display}</b></td>
             <td>{q_display}</td>
             <td><b>{item['valore']:,.2f} €</b></td>
-            <td>-</td>
         </tr>
     """
 
@@ -372,7 +364,6 @@ with tab_portafoglio:
     """
   st.markdown(table_html, unsafe_allow_html=True)
 
-  # Sezione di modifica rapida individuale e rimozione sotto la tabella
   st.markdown("##### ✏️ Gestisci / Modifica singoli titoli")
   for item in portfolio_items:
     sym = item["ticker"]
@@ -386,96 +377,4 @@ with tab_portafoglio:
             step=1.0,
         )
       with ecols[1]:
-        up_price = st.number_input(
-            "Prezzo manuale (€ o %)",
-            value=float(item["manual_price"])
-            if item["manual_price"] > 0
-            else float(item["price"]),
-            key=f"up_p_{sym}",
-            step=0.01,
-        )
-      with ecols[2]:
-        st.write("")
-        if st.button("💾 Salva", key=f"save_{sym}"):
-          st.session_state.portfolio[sym]["qty"] = up_qty
-          st.session_state.portfolio[sym]["manual_price"] = up_price
-          st.rerun()
-      with ecols[3]:
-        st.write("")
-        if st.button("❌ Rimuovi", key=f"del_{sym}"):
-          del st.session_state.portfolio[sym]
-          st.rerun()
-
-  st.divider()
-
-  # Sotto: Cedole e Simulazione Monte Carlo con PAC
-  st.subheader("Cedole e dividendi, prossimi 12 mesi")
-  total_dividends_est = 0
-  div_records = []
-  for sym, data in st.session_state.portfolio.items():
-    is_bond = data.get("is_bond", False)
-    if is_bond:
-      nominale = data["qty"] * 1000.0
-      est_div = nominale * 0.028
-    else:
-      last_div = get_upcoming_dividends(sym)
-      est_div = last_div * 4 * data["qty"] if last_div > 0 else 0.0
-
-    if est_div > 0:
-      total_dividends_est += est_div
-      div_records.append(
-          {"Titolo": sym, "Cedola/Dividendo Stimato": f"{est_div:,.2f} €"}
-      )
-
-  st.markdown(f"### Totale stimato: **{total_dividends_est:,.0f} €**")
-  if div_records:
-    st.dataframe(pd.DataFrame(div_records), use_container_width=True)
-  else:
-    st.info("Nessun dividendo o cedola rilevata per i titoli inseriti.")
-
-  st.divider()
-
-  st.subheader("Simulatore Monte Carlo con PAC")
-  col_m1, col_m2, col_m3 = st.columns(3)
-  with col_m1:
-    pac_amount = st.number_input("Importo PAC (€)", value=300)
-  with col_m2:
-    pac_freq = st.selectbox(
-        "Frequenza", ["Mensile", "Settimanale", "Trimestrale"]
-    )
-  with col_m3:
-    years = st.number_input("Anni", min_value=1, max_value=40, value=20)
-
-  if st.button("🚀 Simula (3.000 scenari)", type="primary"):
-    np.random.seed(42)
-    n_sims = 3000
-    months = int(years * 12)
-    monthly_contrib = (
-        pac_amount
-        if pac_freq == "Mensile"
-        else (pac_amount * 4 if pac_freq == "Settimanale" else pac_amount / 3)
-    )
-
-    expected_return = 0.073
-    volatility = 0.157
-    dt = 1 / 12
-
-    simulations = np.zeros((months, n_sims))
-    simulations[0, :] = total_net_worth
-
-    for m in range(1, months):
-      rand_normals = np.random.normal(0, 1, n_sims)
-      growth = (
-          simulations[m - 1, :]
-          * (
-              1
-              + expected_return * dt
-              + volatility * np.sqrt(dt) * rand_normals
-          )
-          + monthly_contrib
-      )
-      simulations[m, :] = growth
-
-    pessimistic = np.percentile(simulations, 10, axis=1)
-    neutral = np.percentile(simulations, 50, axis=1)
-    optimistic = np.percentile(simulations, 90, axis
+        up_price = st.
