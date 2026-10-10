@@ -133,6 +133,12 @@ if "watchlists" not in st.session_state:
       "Da seguire": ["SWDA.MI", "ISP.MI", "BTP-2067", "AAPL"]
   }
 
+if "show_pac" not in st.session_state:
+  st.session_state.show_pac = False
+
+if "pac_excluded" not in st.session_state:
+  st.session_state.pac_excluded = []
+
 tab_mercati, tab_portafoglio, tab_watchlist = st.tabs(
     ["Mercati", "Portafoglio", "Watchlist"]
 )
@@ -380,173 +386,219 @@ with tab_portafoglio:
 
   st.divider()
 
-  st.subheader("Simulatore Monte Carlo con PAC")
-  col_m1, col_m2, col_m3 = st.columns(3)
-  with col_m1:
-    pac_amount = st.number_input("Importo PAC (€)", value=300)
-  with col_m2:
-    pac_freq = st.selectbox(
-        "Frequenza", ["Mensile", "Settimanale", "Trimestrale"]
-    )
-  with col_m3:
-    years = st.number_input("Anni", min_value=1, max_value=40, value=20)
+  # Pulsante per aprire/chiudere il Simulatore PAC
+  if st.button(
+      "📊 Simulazione Rendimento PAC", type="primary", use_container_width=True
+  ):
+    st.session_state.show_pac = not st.session_state.show_pac
+    st.rerun()
 
-  # Configurazione Ripartizione Percentuale del PAC per ciascun titolo
-  st.markdown("##### 📊 Ripartizione Asset per il PAC (%)")
-  raw_weights = {}
-  cols_w = st.columns(2)
-  idx = 0
-  for item in portfolio_items:
-    sym = item["ticker"]
-    val = item["valore"]
-    default_pct = (
-        float((val / total_net_worth) * 100) if total_net_worth > 0 else 0.0
-    )
-
-    with cols_w[idx % 2]:
-      raw_weights[sym] = st.number_input(
-          f"{sym} ({item['name'][:18]}...)",
-          min_value=0.0,
-          max_value=100.0,
-          value=default_pct,
-          step=1.0,
-          key=f"pac_w_{sym}",
+  if st.session_state.show_pac:
+    st.markdown("### Simulatore Monte Carlo con PAC")
+    col_m1, col_m2, col_m3 = st.columns(3)
+    with col_m1:
+      pac_amount = st.number_input("Importo PAC (€)", value=300)
+    with col_m2:
+      pac_freq = st.selectbox(
+          "Frequenza", ["Mensile", "Settimanale", "Trimestrale"]
       )
-    idx += 1
+    with col_m3:
+      years = st.number_input("Anni", min_value=1, max_value=40, value=20)
 
-  # Normalizzazione pesi al 100%
-  sum_raw = sum(raw_weights.values())
-  if sum_raw > 0:
-    pac_weights = {k: v / sum_raw for k, v in raw_weights.items()}
-  else:
-    pac_weights = {k: 1.0 / len(raw_weights) for k in raw_weights.keys()}
+    st.markdown("##### 📊 Ripartizione Asset per il PAC (%)")
 
-  if st.button("🚀 Simula (3.000 scenari)", type="primary"):
-    # Calcolo rendimento atteso e volatilità ponderata in base alla ripartizione scelta
-    weighted_return = 0.0
-    weighted_vol = 0.0
-
-    for sym, w in pac_weights.items():
-      data = st.session_state.portfolio[sym]
-      is_bond = data.get("is_bond", False)
-
-      if is_bond:
-        # Estrae la cedola lorda dal nome del BTP (es. "2.8%")
-        name_str = data.get("name", "")
-        match = re.search(r"(\d+[\.,]?\d*)\s*%", name_str)
-        gross_coupon = float(match.group(1).replace(",", ".")) if match else 2.5
-        net_coupon = gross_coupon * 0.875  # Tassazione agevolata 12.5%
-
-        # Rendimento netto basato sul prezzo effettivo di mercato (Current Yield netto)
-        cur_price = data.get("manual_price", 0.0)
-        if cur_price <= 0:
-          cur_price = 100.0
-
-        r = (net_coupon / cur_price) if cur_price > 0 else 0.035
-        r = max(r, 0.02)  # Pavimento minimo prudenziale
-        v = 0.06  # Volatilità tipica BTP
-      elif "GOLD" in sym.upper():
-        r, v = 0.06, 0.15  # Oro
-      else:
-        r, v = 0.08, 0.16  # Azioni / ETF azionari
-
-      weighted_return += w * r
-      weighted_vol += w * v
-
-    np.random.seed(42)
-    n_sims = 3000
-    months = int(years * 12)
-    monthly_contrib = (
-        pac_amount
-        if pac_freq == "Mensile"
-        else (pac_amount * 4 if pac_freq == "Settimanale" else pac_amount / 3)
-    )
-
-    dt = 1 / 12
-    simulations = np.zeros((months, n_sims))
-    simulations[0, :] = total_net_worth
-
-    for m in range(1, months):
-      rand_normals = np.random.normal(0, 1, n_sims)
-      growth = (
-          simulations[m - 1, :]
-          * (
-              1
-              + weighted_return * dt
-              + weighted_vol * np.sqrt(dt) * rand_normals
-          )
-          + monthly_contrib
-      )
-      simulations[m, :] = growth
-
-    pessimistic = np.percentile(simulations, 10, axis=1)
-    neutral = np.percentile(simulations, 50, axis=1)
-    optimistic = np.percentile(simulations, 90, axis=1)
-    invested_capital = [
-        total_net_worth + (monthly_contrib * m) for m in range(months)
+    # Filtra i titoli non esclusi dal PAC
+    active_pac_items = [
+        item
+        for item in portfolio_items
+        if item["ticker"] not in st.session_state.pac_excluded
     ]
 
-    col_res1, col_res2, col_res3 = st.columns(3)
-    col_res1.metric(
-        "Pessimista (10° perc.)", f"{pessimistic[-1]:,.0f} €".replace(",", ".")
-    )
-    col_res2.metric(
-        "Neutro (Mediana)", f"{neutral[-1]:,.0f} €".replace(",", ".")
-    )
-    col_res3.metric(
-        "Ottimista (90° perc.)", f"{optimistic[-1]:,.0f} €".replace(",", ".")
-    )
+    if not active_pac_items:
+      st.warning(
+          "Tutti i titoli sono stati esclusi dal PAC. Ripristina almeno un"
+          " titolo."
+      )
+    else:
+      raw_weights = {}
+      for item in active_pac_items:
+        sym = item["ticker"]
+        val = item["valore"]
+        default_pct = (
+            float((val / total_net_worth) * 100)
+            if total_net_worth > 0
+            else 0.0
+        )
 
-    fig = go.Figure()
-    x_axis = np.arange(months) / 12
-    fig.add_trace(
-        go.Scatter(
-            x=x_axis,
-            y=optimistic,
-            mode="lines",
-            name="Ottimista (90°)",
-            line=dict(color="#238636"),
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=x_axis,
-            y=neutral,
-            mode="lines",
-            name="Neutro (50°)",
-            line=dict(color="#1f6feb", width=3),
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=x_axis,
-            y=pessimistic,
-            mode="lines",
-            name="Pessimista (10°)",
-            line=dict(color="#da3633"),
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=x_axis,
-            y=invested_capital,
-            mode="lines",
-            name="Capitale Versato",
-            line=dict(dash="dash", color="#8b9499"),
-        )
-    )
+        cols_pw = st.columns([3.5, 0.5])
+        with cols_pw[0]:
+          raw_weights[sym] = st.number_input(
+              f"{sym} ({item['name'][:18]}...)",
+              min_value=0.0,
+              max_value=100.0,
+              value=default_pct,
+              step=1.0,
+              key=f"pac_w_{sym}",
+          )
+        with cols_pw[1]:
+          st.write("")
+          if st.button("❌", key=f"exc_pac_{sym}", help=f"Escludi {sym} dal PAC"):
+            st.session_state.pac_excluded.append(sym)
+            st.rerun()
 
-    fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="#161b22",
-        plot_bgcolor="#161b22",
-        xaxis_title="Anni",
-        yaxis_title="Valore (€)",
-        legend=dict(
-            orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
-        ),
-    )
-    st.plotly_chart(fig, use_container_width=True)
+      if st.session_state.pac_excluded:
+        st.info(
+            f"Titoli esclusi dal PAC: {', '.join(st.session_state.pac_excluded)}"
+        )
+        if st.button("🔄 Ripristina tutti i titoli esclusi"):
+          st.session_state.pac_excluded = []
+          st.rerun()
+
+      # Normalizzazione pesi al 100%
+      sum_raw = sum(raw_weights.values())
+      if sum_raw > 0:
+        pac_weights = {k: v / sum_raw for k, v in raw_weights.items()}
+      else:
+        pac_weights = {}
+
+      if st.button("🚀 Avvia Simulazione (3.000 scenari)", type="secondary"):
+        if not pac_weights:
+          st.warning("Seleziona una percentuale valida per i titoli del PAC.")
+        else:
+          weighted_return = 0.0
+          weighted_vol = 0.0
+
+          for sym, w in pac_weights.items():
+            data = st.session_state.portfolio[sym]
+            is_bond = data.get("is_bond", False)
+
+            if is_bond:
+              name_str = data.get("name", "")
+              match = re.search(r"(\d+[\.,]?\d*)\s*%", name_str)
+              gross_coupon = (
+                  float(match.group(1).replace(",", ".")) if match else 2.5
+              )
+              net_coupon = gross_coupon * 0.875
+
+              cur_price = data.get("manual_price", 0.0)
+              if cur_price <= 0:
+                cur_price = 100.0
+
+              r = (net_coupon / cur_price) if cur_price > 0 else 0.035
+              r = max(r, 0.02)
+              v = 0.06
+            elif "GOLD" in sym.upper():
+              r, v = 0.06, 0.15
+            else:
+              r, v = 0.08, 0.16
+
+            weighted_return += w * r
+            weighted_vol += w * v
+
+          np.random.seed(42)
+          n_sims = 3000
+          months = int(years * 12)
+          monthly_contrib = (
+              pac_amount
+              if pac_freq == "Mensile"
+              else (
+                  pac_amount * 4
+                  if pac_freq == "Settimanale"
+                  else pac_amount / 3
+              )
+          )
+
+          dt = 1 / 12
+          simulations = np.zeros((months, n_sims))
+          simulations[0, :] = total_net_worth
+
+          for m in range(1, months):
+            rand_normals = np.random.normal(0, 1, n_sims)
+            growth = (
+                simulations[m - 1, :]
+                * (
+                    1
+                    + weighted_return * dt
+                    + weighted_vol * np.sqrt(dt) * rand_normals
+                )
+                + monthly_contrib
+            )
+            simulations[m, :] = growth
+
+          pessimistic = np.percentile(simulations, 10, axis=1)
+          neutral = np.percentile(simulations, 50, axis=1)
+          optimistic = np.percentile(simulations, 90, axis=1)
+          invested_capital = [
+              total_net_worth + (monthly_contrib * m) for m in range(months)
+          ]
+
+          col_res1, col_res2, col_res3 = st.columns(3)
+          col_res1.metric(
+              "Pessimista (10° perc.)",
+              f"{pessimistic[-1]:,.0f} €".replace(",", "."),
+          )
+          col_res2.metric(
+              "Neutro (Mediana)", f"{neutral[-1]:,.0f} €".replace(",", ".")
+          )
+          col_res3.metric(
+              "Ottimista (90° perc.)",
+              f"{optimistic[-1]:,.0f} €".replace(",", "."),
+          )
+
+          fig = go.Figure()
+          x_axis = np.arange(months) / 12
+          fig.add_trace(
+              go.Scatter(
+                  x=x_axis,
+                  y=optimistic,
+                  mode="lines",
+                  name="Ottimista (90°)",
+                  line=dict(color="#238636"),
+              )
+          )
+          fig.add_trace(
+              go.Scatter(
+                  x=x_axis,
+                  y=neutral,
+                  mode="lines",
+                  name="Neutro (50°)",
+                  line=dict(color="#1f6feb", width=3),
+              )
+          )
+          fig.add_trace(
+              go.Scatter(
+                  x=x_axis,
+                  y=pessimistic,
+                  mode="lines",
+                  name="Pessimista (10°)",
+                  line=dict(color="#da3633"),
+              )
+          )
+          fig.add_trace(
+              go.Scatter(
+                  x=x_axis,
+                  y=invested_capital,
+                  mode="lines",
+                  name="Capitale Versato",
+                  line=dict(dash="dash", color="#8b9499"),
+              )
+          )
+
+          fig.update_layout(
+              template="plotly_dark",
+              paper_bgcolor="#161b22",
+              plot_bgcolor="#161b22",
+              xaxis_title="Anni",
+              yaxis_title="Valore (€)",
+              legend=dict(
+                  orientation="h",
+                  yanchor="bottom",
+                  y=1.02,
+                  xanchor="right",
+                  x=1,
+              ),
+          )
+          st.plotly_chart(fig, use_container_width=True)
 
 # 3. TAB WATCHLIST
 with tab_watchlist:
