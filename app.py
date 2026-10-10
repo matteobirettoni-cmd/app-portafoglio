@@ -390,7 +390,52 @@ with tab_portafoglio:
   with col_m3:
     years = st.number_input("Anni", min_value=1, max_value=40, value=20)
 
+  # Configurazione Ripartizione Percentuale del PAC per ciascun titolo
+  st.markdown("##### 📊 Ripartizione Asset per il PAC (%)")
+  raw_weights = {}
+  cols_w = st.columns(2)
+  idx = 0
+  for item in portfolio_items:
+    sym = item["ticker"]
+    val = item["valore"]
+    default_pct = (
+        float((val / total_net_worth) * 100) if total_net_worth > 0 else 0.0
+    )
+
+    with cols_w[idx % 2]:
+      raw_weights[sym] = st.number_input(
+          f"{sym} ({item['name'][:18]}...)",
+          min_value=0.0,
+          max_value=100.0,
+          value=default_pct,
+          step=1.0,
+          key=f"pac_w_{sym}",
+      )
+    idx += 1
+
+  # Normalizzazione pesi al 100%
+  sum_raw = sum(raw_weights.values())
+  if sum_raw > 0:
+    pac_weights = {k: v / sum_raw for k, v in raw_weights.items()}
+  else:
+    pac_weights = {k: 1.0 / len(raw_weights) for k in raw_weights.keys()}
+
   if st.button("🚀 Simula (3.000 scenari)", type="primary"):
+    # Calcolo rendimento atteso e volatilità ponderata in base alla ripartizione scelta
+    weighted_return = 0.0
+    weighted_vol = 0.0
+    for sym, w in pac_weights.items():
+      data = st.session_state.portfolio[sym]
+      if data.get("is_bond", False):
+        r, v = 0.035, 0.06  # Obbligazioni/BTP
+      elif "GOLD" in sym.upper():
+        r, v = 0.06, 0.15  # Oro
+      else:
+        r, v = 0.08, 0.16  # Azioni / ETF azionari
+
+      weighted_return += w * r
+      weighted_vol += w * v
+
     np.random.seed(42)
     n_sims = 3000
     months = int(years * 12)
@@ -400,10 +445,7 @@ with tab_portafoglio:
         else (pac_amount * 4 if pac_freq == "Settimanale" else pac_amount / 3)
     )
 
-    expected_return = 0.073
-    volatility = 0.157
     dt = 1 / 12
-
     simulations = np.zeros((months, n_sims))
     simulations[0, :] = total_net_worth
 
@@ -413,8 +455,8 @@ with tab_portafoglio:
           simulations[m - 1, :]
           * (
               1
-              + expected_return * dt
-              + volatility * np.sqrt(dt) * rand_normals
+              + weighted_return * dt
+              + weighted_vol * np.sqrt(dt) * rand_normals
           )
           + monthly_contrib
       )
