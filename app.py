@@ -1,3 +1,4 @@
+import re
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -424,10 +425,26 @@ with tab_portafoglio:
     # Calcolo rendimento atteso e volatilità ponderata in base alla ripartizione scelta
     weighted_return = 0.0
     weighted_vol = 0.0
+
     for sym, w in pac_weights.items():
       data = st.session_state.portfolio[sym]
-      if data.get("is_bond", False):
-        r, v = 0.035, 0.06  # Obbligazioni/BTP
+      is_bond = data.get("is_bond", False)
+
+      if is_bond:
+        # Estrae la cedola lorda dal nome del BTP (es. "2.8%")
+        name_str = data.get("name", "")
+        match = re.search(r"(\d+[\.,]?\d*)\s*%", name_str)
+        gross_coupon = float(match.group(1).replace(",", ".")) if match else 2.5
+        net_coupon = gross_coupon * 0.875  # Tassazione agevolata 12.5%
+
+        # Rendimento netto basato sul prezzo effettivo di mercato (Current Yield netto)
+        cur_price = data.get("manual_price", 0.0)
+        if cur_price <= 0:
+          cur_price = 100.0
+
+        r = (net_coupon / cur_price) if cur_price > 0 else 0.035
+        r = max(r, 0.02)  # Pavimento minimo prudenziale
+        v = 0.06  # Volatilità tipica BTP
       elif "GOLD" in sym.upper():
         r, v = 0.06, 0.15  # Oro
       else:
