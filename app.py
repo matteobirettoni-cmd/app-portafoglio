@@ -22,6 +22,23 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Sidebar globale con pulsante di aggiornamento
+with st.sidebar:
+  st.markdown("### ⚙️ Pannello di Controllo")
+  st.write(
+      "Usa il pulsante sottostante per svuotare la cache e forzare lo scaricamento"
+      " dei prezzi freschi da Yahoo Finance."
+  )
+  if st.button("🔄 Aggiorna da Yahoo Finance", type="primary"):
+    st.cache_data.clear()
+    st.success("Dati aggiornati con successo!")
+    st.rerun()
+  st.divider()
+  st.info(
+      "Suggerimento: puoi anche modificare i singoli prezzi o quantità usando"
+      " l'icona della matita ✏️ nella tabella del portafoglio."
+  )
+
 
 # Funzione dati da yfinance
 @st.cache_data(ttl=300)
@@ -467,70 +484,3 @@ with tab_portafoglio:
         )
     )
     fig.add_trace(
-        go.Scatter(
-            x=x_axis,
-            y=invested_capital,
-            mode="lines",
-            name="Capitale Versato",
-            line=dict(dash="dash", color="#8b9499"),
-        )
-    )
-
-    fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="#161b22",
-        plot_bgcolor="#161b22",
-        xaxis_title="Anni",
-        yaxis_title="Valore (€)",
-        legend=dict(
-            orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
-        ),
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-# 3. TAB WATCHLIST
-with tab_watchlist:
-  st.markdown(
-      """
-        <div style="background: linear-gradient(135deg, #d97706, #78350f); padding: 25px; border-radius: 12px; margin-bottom: 20px;">
-            <h1 style="color: white; margin: 0;">Watchlist</h1>
-            <p style="color: #fef3c7; margin: 5px 0 0 0;">Monitora i titoli di tuo interesse con prezzi in tempo reale</p>
-        </div>
-    """,
-      unsafe_allow_html=True,
-  )
-
-  selected_wl = st.selectbox(
-      "Seleziona Lista", list(st.session_state.watchlists.keys())
-  )
-
-  with st.form("add_wl_form"):
-    col_w1, col_w2 = st.columns([3, 1])
-    with col_w1:
-      new_wl_ticker = st.text_input("Aggiungi Ticker (es. BTP-2067, TSLA)")
-    with col_w2:
-      submitted_wl = st.form_submit_button("Aggiungi")
-      if submitted_wl and new_wl_ticker:
-        if (
-            new_wl_ticker.upper()
-            not in st.session_state.watchlists[selected_wl]
-        ):
-          st.session_state.watchlists[selected_wl].append(
-              new_wl_ticker.upper()
-          )
-          st.rerun()
-
-  for sym in st.session_state.watchlists[selected_wl]:
-    price, change = get_ticker_data(sym)
-    price_str = f"{price:,.2f} €" if price else "n.d."
-    change_str = f"{change:+.2f}%" if change is not None else ""
-
-    cols = st.columns([3, 2, 1])
-    with cols[0]:
-      st.markdown(f"**{sym}**")
-    with cols[1]:
-      st.markdown(f"{price_str} ({change_str})")
-    with cols[2]:
-      if st.button("❌", key=f"del_wl_{sym}"):
-        st.session_state.watchlists[selected_wl].remove(sym)
-        st.rerun()
