@@ -136,6 +136,9 @@ if "watchlists" not in st.session_state:
 if "show_pac" not in st.session_state:
   st.session_state.show_pac = False
 
+if "show_fire" not in st.session_state:
+  st.session_state.show_fire = False
+
 if "pac_excluded" not in st.session_state:
   st.session_state.pac_excluded = []
 
@@ -407,7 +410,6 @@ with tab_portafoglio:
 
     st.markdown("##### 📊 Ripartizione Asset per il PAC (%)")
 
-    # Filtra i titoli non esclusi dal PAC
     active_pac_items = [
         item
         for item in portfolio_items
@@ -454,60 +456,51 @@ with tab_portafoglio:
           st.session_state.pac_excluded = []
           st.rerun()
 
-      # Normalizzazione pesi al 100%
       sum_raw = sum(raw_weights.values())
       if sum_raw > 0:
         pac_weights = {k: v / sum_raw for k, v in raw_weights.items()}
       else:
         pac_weights = {}
 
+      # Calcolo preventivo del rendimento ponderato e contributo mensile per riutilizzo globale
+      weighted_return = 0.0
+      weighted_vol = 0.0
+      for sym, w in pac_weights.items():
+        data = st.session_state.portfolio[sym]
+        is_bond = data.get("is_bond", False)
+        if is_bond:
+          name_str = data.get("name", "")
+          match = re.search(r"(\d+[\.,]?\d*)\s*%", name_str)
+          gross_coupon = (
+              float(match.group(1).replace(",", ".")) if match else 2.5
+          )
+          net_coupon = gross_coupon * 0.875
+          cur_price = data.get("manual_price", 0.0)
+          if cur_price <= 0:
+            cur_price = 100.0
+          r = (net_coupon / cur_price) if cur_price > 0 else 0.035
+          r = max(r, 0.02)
+          v = 0.06
+        elif "GOLD" in sym.upper():
+          r, v = 0.06, 0.15
+        else:
+          r, v = 0.08, 0.16
+        weighted_return += w * r
+        weighted_vol += w * v
+
+      monthly_contrib = (
+          pac_amount
+          if pac_freq == "Mensile"
+          else (pac_amount * 4 if pac_freq == "Settimanale" else pac_amount / 3)
+      )
+
       if st.button("🚀 Avvia Simulazione (3.000 scenari)", type="secondary"):
         if not pac_weights:
           st.warning("Seleziona una percentuale valida per i titoli del PAC.")
         else:
-          weighted_return = 0.0
-          weighted_vol = 0.0
-
-          for sym, w in pac_weights.items():
-            data = st.session_state.portfolio[sym]
-            is_bond = data.get("is_bond", False)
-
-            if is_bond:
-              name_str = data.get("name", "")
-              match = re.search(r"(\d+[\.,]?\d*)\s*%", name_str)
-              gross_coupon = (
-                  float(match.group(1).replace(",", ".")) if match else 2.5
-              )
-              net_coupon = gross_coupon * 0.875
-
-              cur_price = data.get("manual_price", 0.0)
-              if cur_price <= 0:
-                cur_price = 100.0
-
-              r = (net_coupon / cur_price) if cur_price > 0 else 0.035
-              r = max(r, 0.02)
-              v = 0.06
-            elif "GOLD" in sym.upper():
-              r, v = 0.06, 0.15
-            else:
-              r, v = 0.08, 0.16
-
-            weighted_return += w * r
-            weighted_vol += w * v
-
           np.random.seed(42)
           n_sims = 3000
           months = int(years * 12)
-          monthly_contrib = (
-              pac_amount
-              if pac_freq == "Mensile"
-              else (
-                  pac_amount * 4
-                  if pac_freq == "Settimanale"
-                  else pac_amount / 3
-              )
-          )
-
           dt = 1 / 12
           simulations = np.zeros((months, n_sims))
           simulations[0, :] = total_net_worth
@@ -599,6 +592,79 @@ with tab_portafoglio:
               ),
           )
           st.plotly_chart(fig, use_container_width=True)
+
+      st.markdown("<br>", unsafe_allow_html=True)
+
+      # Pulsante per attivare il Simulatore FIRE sotto i grafici/controlli PAC
+      if st.button(
+          "🔥 Calcola Obiettivo FIRE", type="secondary", use_container_width=True
+      ):
+        st.session_state.show_fire = not st.session_state.show_fire
+        st.rerun()
+
+      if st.session_state.show_fire:
+        st.markdown(
+            "### 🔥 Simulatore FIRE (Financial Independence, Retire Early)"
+        )
+        f_col1, f_col2, f_col3 = st.columns(3)
+        with f_col1:
+          fire_monthly_exp = st.number_input(
+              "Spesa mensile des. (€)", value=1500.0, step=100.0
+          )
+        with f_col2:
+          current_age = st.number_input(
+              "Età attuale", min_value=18, max_value=90, value=30
+          )
+        with f_col3:
+          swr = (
+              st.selectbox("Prelievo sicuro (SWR)", ["4%", "3.5%", "3%"])
+              .replace("%", "")
+              .strip()
+          )
+          swr_val = float(swr) / 100.0
+
+        fire_target = fire_monthly_exp * 12 * (1.0 / swr_val)
+        st.markdown(f"#### 🎯 Tuo FIRE Number: **{fire_target:,.0f} €**")
+
+        # Calcolo deterministico dei mesi necessari per raggiungere il FIRE Number
+        r_m = weighted_return / 12.0
+        val = total_net_worth
+        months_needed = 0
+        reached = False
+
+        if val >= fire_target:
+          reached = True
+          months_needed = 0
+        else:
+          for m in range(1, 12 * 70):  # fino a 70 anni di simulazione
+            val = val * (1 + r_m) + monthly_contrib
+            if val >= fire_target:
+              months_needed = m
+              reached = True
+              break
+
+        if reached:
+          years_needed = months_needed / 12.0
+          retire_age = current_age + years_needed
+          st.success(
+              f"🎉 Raggiungeresti il traguardo FIRE tra **{years_needed:.1f}"
+              f" anni** all'età di **{retire_age:.1f} anni**!"
+          )
+
+          progress_pct = min(1.0, total_net_worth / fire_target)
+          st.progress(
+              progress_pct,
+              text=(
+                  f"Progresso attuale: {total_net_worth:,.0f} € /"
+                  f" {fire_target:,.0f} € ({progress_pct*100:.1f}%)"
+              ),
+          )
+        else:
+          st.warning(
+              "Con i parametri attuali e il PAC impostato, il traguardo FIRE"
+              " richiede più di 70 anni. Prova ad aumentare l'importo del"
+              " PAC."
+          )
 
 # 3. TAB WATCHLIST
 with tab_watchlist:
