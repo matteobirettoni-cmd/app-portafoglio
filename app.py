@@ -16,7 +16,7 @@ st.markdown(
     .stApp { background-color: #0e1117; color: #ffffff; }
     .market-card-pos { background-color: #113822; padding: 15px; border-radius: 8px; border-left: 5px solid #238636; margin-bottom: 10px; }
     .market-card-neg { background-color: #3b171c; padding: 15px; border-radius: 8px; border-left: 5px solid #da3633; margin-bottom: 10px; }
-    .asset-row { background-color: #161b22; padding: 12px; border-radius: 8px; border: 1px solid #30363d; margin-bottom: 8px; }
+    .asset-row { background-color: #161b22; padding: 10px 12px; border-radius: 8px; border: 1px solid #30363d; margin-bottom: 6px; }
     </style>
 """,
     unsafe_allow_html=True,
@@ -34,10 +34,7 @@ with st.sidebar:
     st.success("Dati aggiornati con successo!")
     st.rerun()
   st.divider()
-  st.info(
-      "💡 Suggerimento: usa l'icona ✏️ accanto a ciascun titolo per modificarne"
-      " rapidamente prezzo o quantità."
-  )
+  st.info("💡 Usa le icone ✏️ e ❌ a fianco di ogni titolo per gestirlo.")
 
 
 # Funzione dati da yfinance
@@ -313,6 +310,7 @@ with tab_portafoglio:
       }
       st.rerun()
 
+  # Visualizzazione compatta con sole emoji sulla destra per ciascun titolo
   for item in portfolio_items:
     sym = item["ticker"]
     chg = item["change"]
@@ -327,81 +325,72 @@ with tab_portafoglio:
     if edit_key not in st.session_state:
       st.session_state[edit_key] = False
 
-    with st.container():
+    cols = st.columns([2.4, 1.8, 0.4, 0.4])
+    with cols[0]:
       st.markdown(
           f"""
-            <div class="asset-row">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div>
-                        <b>{sym}</b>{badge}<br>
-                        <span style="font-size: 11px; color: #8b9499;">{item['name']}</span>
-                    </div>
-                    <div style="text-align: right;">
-                        <span style="color: {c_col}; font-weight: bold; font-size: 13px;">{c_sign}{chg:.2f}%</span><br>
-                        <span style="font-size: 13px;">{p_display}</span>
-                    </div>
-                </div>
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px; border-top: 1px solid #30363d; padding-top: 6px; font-size: 12px; color: #c9d1d9;">
-                    <span>Qt: {item['qty']} | Tot: <b>{item['valore']:,.2f} €</b></span>
-                </div>
+            <div style="font-size: 13px;">
+                <b>{sym}</b>{badge}<br>
+                <span style="font-size: 11px; color: #8b9499;">{item['name']}</span><br>
+                <span style="font-size: 11px; color: #c9d1d9;">Qt: {item['qty']} | Tot: <b>{item['valore']:,.0f} €</b></span>
             </div>
             """,
           unsafe_allow_html=True,
       )
-
-      col_btn1, col_btn2 = st.columns([1, 1])
-      with col_btn1:
-        if st.button(
-            "✏️ Modifica", key=f"btn_edit_{sym}", use_container_width=True
-        ):
-          st.session_state[edit_key] = not st.session_state[edit_key]
-          st.rerun()
-      with col_btn2:
-        if st.button(
-            "❌ Rimuovi", key=f"btn_del_{sym}", use_container_width=True
-        ):
-          del st.session_state.portfolio[sym]
-          st.rerun()
-
-      if st.session_state[edit_key]:
-        with st.container():
-          st.markdown(
-              f"<div style='background-color: #21262d; padding: 10px; border-radius: 6px; margin-bottom: 10px;'>"
-              f"<span style='font-size:12px; color:#8b94e0; font-weight:bold;'>Modifica {sym}</span>"
-              f"</div>",
-              unsafe_allow_html=True,
-          )
-          ec1, ec2, ec3 = st.columns([2, 2, 1])
-          with ec1:
-            up_q = st.number_input(
-                "Qt / Lotti",
-                value=float(item["qty"]),
-                key=f"q_{sym}",
-                step=1.0,
-            )
-          with ec2:
-            default_p = (
-                float(item["manual_price"])
-                if item["manual_price"] > 0
-                else float(item["price"])
-            )
-            up_p = st.number_input(
-                "Prezzo (€ o %)",
-                value=default_p,
-                key=f"p_{sym}",
-                step=0.01,
-            )
-          with ec3:
-            st.write("")
-            if st.button("💾", key=f"save_{sym}", use_container_width=True):
-              st.session_state.portfolio[sym]["qty"] = up_q
-              st.session_state.portfolio[sym]["manual_price"] = up_p
-              st.session_state[edit_key] = False
-              st.rerun()
-
+    with cols[1]:
       st.markdown(
-          "<div style='margin-bottom: 10px;'></div>", unsafe_allow_html=True
+          f"""
+            <div style="text-align: right; font-size: 13px;">
+                <span style="color: {c_col}; font-weight: bold;">{c_sign}{chg:.2f}%</span><br>
+                <b>{p_display}</b>
+            </div>
+            """,
+          unsafe_allow_html=True,
       )
+    with cols[2]:
+      if st.button("✏️", key=f"btn_edit_{sym}", help="Modifica"):
+        st.session_state[edit_key] = not st.session_state[edit_key]
+        st.rerun()
+    with cols[3]:
+      if st.button("❌", key=f"btn_del_{sym}", help="Rimuovi"):
+        del st.session_state.portfolio[sym]
+        st.rerun()
+
+    # Box di modifica a scomparsa immediata sotto la riga
+    if st.session_state[edit_key]:
+      with st.container():
+        st.markdown(
+            f"<div style='background-color: #161b22; padding: 10px; border-radius: 6px; border: 1px solid #30363d; margin-bottom: 6px;'>"
+            f"<span style='font-size:12px; color:#8b94e0; font-weight:bold;'>Modifica {sym}</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        ec1, ec2, ec3 = st.columns([2, 2, 1])
+        with ec1:
+          up_q = st.number_input(
+              "Qt / Lotti",
+              value=float(item["qty"]),
+              key=f"q_{sym}",
+              step=1.0,
+          )
+        with ec2:
+          default_p = (
+              float(item["manual_price"])
+              if item["manual_price"] > 0
+              else float(item["price"])
+          )
+          up_p = st.number_input(
+              "Prezzo (€ o %)", value=default_p, key=f"p_{sym}", step=0.01
+          )
+        with ec3:
+          st.write("")
+          if st.button("💾", key=f"save_{sym}", use_container_width=True):
+            st.session_state.portfolio[sym]["qty"] = up_q
+            st.session_state.portfolio[sym]["manual_price"] = up_p
+            st.session_state[edit_key] = False
+            st.rerun()
+
+    st.markdown("<hr style='margin: 4px 0; border-color: #21262d;'>", unsafe_allow_html=True)
 
   st.divider()
 
@@ -549,59 +538,4 @@ with tab_watchlist:
       """
         <div style="background: linear-gradient(135deg, #d97706, #78350f); padding: 25px; border-radius: 12px; margin-bottom: 20px;">
             <h1 style="color: white; margin: 0;">Watchlist</h1>
-            <p style="color: #fef3c7; margin: 5px 0 0 0;">Monitora i titoli di tuo interesse con prezzi in tempo reale</p>
-        </div>
-    """,
-      unsafe_allow_html=True,
-  )
-
-  selected_wl = st.selectbox(
-      "Seleziona Lista", list(st.session_state.watchlists.keys())
-  )
-
-  with st.form("add_wl_form"):
-    col_w1, col_w2 = st.columns([3, 1])
-    with col_w1:
-      new_wl_ticker = st.text_input("Aggiungi Ticker (es. BTP-2067, TSLA)")
-    with col_w2:
-      submitted_wl = st.form_submit_button("Aggiungi")
-      if submitted_wl and new_wl_ticker:
-        if (
-            new_wl_ticker.upper()
-            not in st.session_state.watchlists[selected_wl]
-        ):
-          st.session_state.watchlists[selected_wl].append(
-              new_wl_ticker.upper()
-          )
-          st.rerun()
-
-  for sym in st.session_state.watchlists[selected_wl]:
-    price, change = get_ticker_data(sym)
-    p_str = f"{price:,.2f} €" if price else "n.d."
-    c_val = change if change is not None else 0.0
-    c_sign = "+" if c_val >= 0 else ""
-    c_col = "#3fb950" if c_val >= 0 else "#f85149"
-
-    with st.container():
-      st.markdown(
-          f"""
-            <div class="asset-row">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div><b>{sym}</b></div>
-                    <div style="text-align: right;">
-                        <b>{p_str}</b><br>
-                        <span style="color: {c_col}; font-weight: bold; font-size: 12px;">{c_sign}{c_val:.2f}%</span>
-                    </div>
-                </div>
-            </div>
-            """,
-          unsafe_allow_html=True,
-      )
-      if st.button(
-          f"❌ Rimuovi {sym}", key=f"del_wl_{sym}", use_container_width=True
-      ):
-        st.session_state.watchlists[selected_wl].remove(sym)
-        st.rerun()
-      st.markdown(
-          "<div style='margin-bottom: 8px;'></div>", unsafe_allow_html=True
-      )
+            <p style="color: #fef3c7; margin: 5px 0 0
