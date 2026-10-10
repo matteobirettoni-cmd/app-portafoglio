@@ -9,7 +9,7 @@ st.set_page_config(
     page_title="Portfolio & Market Monitor", page_icon="📈", layout="wide"
 )
 
-# Stile CSS personalizzato
+# Stile CSS personalizzato per ottimizzazione mobile e tabelle scrollabili
 st.markdown(
     """
     <style>
@@ -17,6 +17,10 @@ st.markdown(
     .metric-card { background-color: #161b22; padding: 20px; border-radius: 12px; border: 1px solid #30363d; margin-bottom: 20px; }
     .market-card-pos { background-color: #113822; padding: 15px; border-radius: 8px; border-left: 5px solid #238636; margin-bottom: 10px; }
     .market-card-neg { background-color: #3b171c; padding: 15px; border-radius: 8px; border-left: 5px solid #da3633; margin-bottom: 10px; }
+    .table-container { width: 100%; overflow-x: auto; margin-bottom: 20px; }
+    .custom-table { width: 100%; border-collapse: collapse; background-color: #161b22; border-radius: 8px; overflow: hidden; }
+    .custom-table th { background-color: #21262d; color: #c9d1d9; padding: 12px; text-align: left; font-size: 14px; border-bottom: 1px solid #30363d; white-space: nowrap; }
+    .custom-table td { padding: 12px; color: #ffffff; font-size: 14px; border-bottom: 1px solid #30363d; white-space: nowrap; }
     </style>
 """,
     unsafe_allow_html=True,
@@ -35,8 +39,8 @@ with st.sidebar:
     st.rerun()
   st.divider()
   st.info(
-      "Suggerimento: puoi anche modificare i singoli prezzi o quantità usando"
-      " l'icona della matita ✏️ nella tabella del portafoglio."
+      "💡 Suggerimento: scorri la tabella del portafoglio verso destra per"
+      " vedere quantità e totali da smartphone."
   )
 
 
@@ -81,7 +85,7 @@ def get_upcoming_dividends(ticker_symbol):
   return 0.0
 
 
-# Inizializzazione Sessione con il tuo portafoglio esatto
+# Inizializzazione Sessione con il tuo portafoglio
 if "portfolio" not in st.session_state:
   st.session_state.portfolio = {
       "ISP.MI": {
@@ -155,11 +159,44 @@ tab_mercati, tab_portafoglio, tab_watchlist = st.tabs(
     ["Mercati", "Portafoglio", "Watchlist"]
 )
 
+market_symbols = {
+    "FTSE MIB": "^FTSEMIB",
+    "Euro Stoxx 50": "^STOXX50E",
+    "DAX": "^GDAXI",
+    "S&P 500": "^GSPC",
+    "Nasdaq 100": "^NDX",
+    "Oro (USD/oz)": "GC=F",
+    "Petrolio Brent": "BZ=F",
+}
+
 # 1. TAB MERCATI
 with tab_mercati:
+  # Calcolo sentiment mercati per decidere il colore dello sfondo
+  pos_count = 0
+  tot_count = 0
+  evaluated_markets = []
+  for name, sym in market_symbols.items]:  # type: ignore
+    pass  # handled below properly
+  for name, sym in market_symbols.items():
+    p, c = get_ticker_data(sym)
+    if c is not None:
+      tot_count += 1
+      if c >= 0:
+        pos_count += 1
+      evaluated_markets.append((name, p, c))
+
+  is_market_bullish = (
+      pos_count >= (tot_count / 2) if tot_count > 0 else True
+  )
+  header_bg = (
+      "linear-gradient(135deg, #238636, #113822)"
+      if is_market_bullish
+      else "linear-gradient(135deg, #da3633, #3b171c)"
+  )
+
   st.markdown(
-      """
-        <div style="background: linear-gradient(135deg, #238636, #113822); padding: 25px; border-radius: 12px; margin-bottom: 20px;">
+      f"""
+        <div style="background: {header_bg}; padding: 25px; border-radius: 12px; margin-bottom: 20px;">
             <h1 style="color: white; margin: 0;">Mercati</h1>
             <p style="color: #c9d1d9; margin: 5px 0 0 0;">Panoramica in tempo reale dei principali indici, materie prime e crypto</p>
         </div>
@@ -167,54 +204,37 @@ with tab_mercati:
       unsafe_allow_html=True,
   )
 
-  market_symbols = {
-      "FTSE MIB": "^FTSEMIB",
-      "Euro Stoxx 50": "^STOXX50E",
-      "DAX": "^GDAXI",
-      "S&P 500": "^GSPC",
-      "Nasdaq 100": "^NDX",
-      "Oro (USD/oz)": "GC=F",
-      "Petrolio Brent": "BZ=F",
-  }
-
   col1, col2 = st.columns(2)
   i = 0
-  for name, sym in market_symbols.items():
-    price, change = get_ticker_data(sym)
-    if price is not None:
-      is_pos = change >= 0
-      card_class = "market-card-pos" if is_pos else "market-card-neg"
-      sign = "+" if is_pos else ""
-      color = "#3fb950" if is_pos else "#f85149"
+  for name, price, change in evaluated_markets:
+    is_pos = change >= 0
+    card_class = "market-card-pos" if is_pos else "market-card-neg"
+    sign = "+" if is_pos else ""
+    color = "#3fb950" if is_pos else "#f85149"
 
-      with col1 if i % 2 == 0 else col2:
-        st.markdown(
-            f"""
-                <div class="{card_class}">
-                    <h3 style="margin:0; color: white;">{name}</h3>
-                    <p style="margin:2px 0; color: #8b94e0; font-size: 12px;">Indice / Materia Prima</p>
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
-                        <span style="font-size: 20px; font-weight: bold; color: white;">{price:,.2f}</span>
-                        <span style="font-size: 16px; font-weight: bold; color: {color};">{sign}{change:.2f}%</span>
-                    </div>
+    with col1 if i % 2 == 0 else col2:
+      st.markdown(
+          f"""
+            <div class="{card_class}">
+                <h3 style="margin:0; color: white;">{name}</h3>
+                <p style="margin:2px 0; color: #8b94e0; font-size: 12px;">Indice / Materia Prima</p>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
+                    <span style="font-size: 20px; font-weight: bold; color: white;">{price:,.2f}</span>
+                    <span style="font-size: 16px; font-weight: bold; color: {color};">{sign}{change:.2f}%</span>
                 </div>
-            """,
-            unsafe_allow_html=True,
-        )
+            </div>
+        """,
+          unsafe_allow_html=True,
+      )
     i += 1
 
 # 2. TAB PORTAFOGLIO
 with tab_portafoglio:
-  st.markdown(
-      """
-        <div style="background: linear-gradient(135deg, #1f6feb, #113822); padding: 25px; border-radius: 12px; margin-bottom: 20px;">
-            <h3 style="color: #8b94e0; margin: 0;">Patrimonio netto</h3>
-    """,
-      unsafe_allow_html=True,
-  )
-
+  # Calcoli portafoglio e variazioni giornaliere
   total_net_worth = 0
+  total_daily_change_eur = 0
   portfolio_items = []
+
   for sym, data in st.session_state.portfolio.items():
     manual_p = data.get("manual_price", 0.0)
     if manual_p > 0:
@@ -233,46 +253,63 @@ with tab_portafoglio:
       valore = data["qty"] * price
 
     total_net_worth += valore
+    item_daily_eur = valore * (change / 100.0)
+    total_daily_change_eur += item_daily_eur
+
     portfolio_items.append({
         "ticker": sym,
         "name": data["name"],
         "qty": data["qty"],
         "price": price,
+        "change": change,
         "valore": valore,
         "is_bond": is_bond,
         "manual_price": manual_p,
     })
 
+  prev_net_worth = total_net_worth - total_daily_change_eur
+  portfolio_daily_pct = (
+      (total_daily_change_eur / prev_net_worth) * 100
+      if prev_net_worth > 0
+      else 0.0
+  )
+
+  # Header Patrimonio Totale con variazione percentuale giornaliera
+  chg_sign = "+" if total_daily_change_eur >= 0 else ""
+  chg_color = "#3fb950" if total_daily_change_eur >= 0 else "#f85149"
+
   st.markdown(
       f"""
-        <h1 style="color: white; margin: 5px 0; font-size: 38px;">{total_net_worth:,.2f} €</h1>
-        <p style="color: #c9d1d9; margin: 0;">{len(st.session_state.portfolio)} titoli monitorati</p>
+        <div style="background: linear-gradient(135deg, #1f6feb, #113822); padding: 25px; border-radius: 12px; margin-bottom: 20px;">
+            <h3 style="color: #8b94e0; margin: 0;">Patrimonio netto</h3>
+            <h1 style="color: white; margin: 5px 0; font-size: 38px;">{total_net_worth:,.2f} €</h1>
+            <p style="color: {chg_color}; margin: 0; font-size: 16px; font-weight: bold;">
+                Variazione odierna: {chg_sign}{total_daily_change_eur:,.2f} € ({chg_sign}{portfolio_daily_pct:.2f}%)
+            </p>
+            <p style="color: #c9d1d9; margin: 5px 0 0 0; font-size: 13px;">{len(st.session_state.portfolio)} titoli monitorati</p>
         </div>
     """,
       unsafe_allow_html=True,
   )
 
-  st.subheader("Posizioni in Portafoglio")
+  st.subheader("Posizioni in Portafoglio (Scorri a destra ➡️)")
 
+  # Form di aggiunta posizione
   with st.form("add_position_form"):
     col_a, col_b, col_c, col_d, col_e = st.columns([2, 2, 1, 1, 1])
     with col_a:
-      new_ticker = st.text_input("Ticker / ISIN (es. BTP-2067, AAPL)")
+      new_ticker = st.text_input("Ticker / ISIN")
     with col_b:
-      new_name = st.text_input("Nome Descrittivo")
+      new_name = st.text_input("Nome")
     with col_c:
       new_qty = st.number_input(
           "Quantità / Lotti", min_value=0.0, value=1.0, step=1.0
       )
     with col_d:
-      new_is_bond = st.checkbox("È Obbligazione/BTP?")
+      new_is_bond = st.checkbox("Obbligazione/BTP?")
     with col_e:
       new_manual_price = st.number_input(
-          "Prezzo Manuale (€ o %)",
-          min_value=0.0,
-          value=0.0,
-          step=0.01,
-          help="Se inserito (>0), usa questo prezzo fisso",
+          "Prezzo Man. (€ o %)", min_value=0.0, value=0.0, step=0.01
       )
 
     submitted = st.form_submit_button("Aggiungi Posizione")
@@ -285,63 +322,62 @@ with tab_portafoglio:
       }
       st.rerun()
 
-  # Visualizzazione e modifica rapida compatta con icona matita
+  # Tabella scrollabile orizzontalmente per mobile (Ticker, Variazione %, Prezzo in evidenza, poi scrollabile a destra)
+  table_html = """
+    <div class="table-container">
+        <table class="custom-table">
+            <thead>
+                <tr>
+                    <th>Titolo / Nome</th>
+                    <th>Var. Oggi</th>
+                    <th>Prezzo</th>
+                    <th>Quantità / Lotti</th>
+                    <th>Totale (€)</th>
+                    <th>Azioni</th>
+                </tr>
+            </thead>
+            <tbody>
+    """
+
   for item in portfolio_items:
     sym = item["ticker"]
-    edit_key = f"editing_{sym}"
-    if edit_key not in st.session_state:
-      st.session_state[edit_key] = False
+    chg = item["change"]
+    c_sign = "+" if chg >= 0 else ""
+    c_col = "#3fb950" if chg >= 0 else "#f85149"
+    badge = " (BTP/Bond)" if item["is_bond"] else ""
+    p_display = (
+        f"{item['price']:.2f}%" if item["is_bond"] else f"{item['price']:,.2f} €"
+    )
+    q_display = (
+        f"Lotti: {item['qty']} (Nom. {item['qty']*1000:,.0f}€)"
+        if item["is_bond"]
+        else f"Qt: {item['qty']}"
+    )
 
-    cols = st.columns([2, 2, 1.3, 1, 0.7])
-    with cols[0]:
-      badge = (
-          " <span style='color:#3fb950; font-size:10px;'>(Bond/BTP)</span>"
-          if item["is_bond"]
-          else ""
-      )
-      st.markdown(
-          f"**{sym}**{badge}<br><span style='font-size:12px;"
-          f" color:#8b9499;'>{item['name']}</span>",
-          unsafe_allow_html=True,
-      )
-    with cols[1]:
-      q_label = (
-          f"Lotti: {item['qty']} (Nom. {item['qty']*1000:,.0f}€)"
-          if item["is_bond"]
-          else f"Quantità: {item['qty']}"
-      )
-      st.markdown(q_label)
-    with cols[2]:
-      p_label = (
-          f"Prezzo: {item['price']:.2f}%"
-          if item["is_bond"]
-          else f"Prezzo: {item['price']:,.2f} €"
-      )
-      sub_c1, sub_c2 = st.columns([3, 1])
-      with sub_c1:
-        st.markdown(p_label, unsafe_allow_html=True)
-      with sub_c2:
-        if st.button("✏️", key=f"edit_btn_{sym}", help="Modifica prezzo/quantità"):
-          st.session_state[edit_key] = not st.session_state[edit_key]
-          st.rerun()
-    with cols[3]:
-      st.markdown(
-          f"Tot: **{item['valore']:,.0f} €**", unsafe_allow_html=True
-      )
-    with cols[4]:
-      if st.button("❌", key=f"del_{sym}", help="Rimuovi"):
-        del st.session_state.portfolio[sym]
-        st.rerun()
+    table_html += f"""
+        <tr>
+            <td><b>{sym}</b>{badge}<br><span style="font-size:11px; color:#8b9499;">{item['name']}</span></td>
+            <td><span style="color: {c_col}; font-weight:bold;">{c_sign}{chg:.2f}%</span></td>
+            <td><b>{p_display}</b></td>
+            <td>{q_display}</td>
+            <td><b>{item['valore']:,.2f} €</b></td>
+            <td>-</td>
+        </tr>
+    """
 
-    # Box di modifica rapida a comparsa compatta
-    if st.session_state[edit_key]:
-      st.markdown(
-          f"<div style='background-color: #161b22; padding: 12px; border-radius: 8px; border: 1px solid #30363d; margin-bottom: 10px;'>"
-          f"<p style='margin:0 0 8px 0; font-size:13px; color:#8b94e0; font-weight:bold;'>Modifica rapida: {sym}</p>"
-          f"</div>",
-          unsafe_allow_html=True,
-      )
-      ecols = st.columns([2, 2, 1])
+  table_html += """
+            </tbody>
+        </table>
+    </div>
+    """
+  st.markdown(table_html, unsafe_allow_html=True)
+
+  # Sezione di modifica rapida individuale e rimozione sotto la tabella
+  st.markdown("##### ✏️ Gestisci / Modifica singoli titoli")
+  for item in portfolio_items:
+    sym = item["ticker"]
+    with st.expander(f"Modifica {sym} - {item['name']}"):
+      ecols = st.columns([2, 2, 1, 1])
       with ecols[0]:
         up_qty = st.number_input(
             "Quantità / Lotti",
@@ -360,15 +396,19 @@ with tab_portafoglio:
         )
       with ecols[2]:
         st.write("")
-        st.write("")
         if st.button("💾 Salva", key=f"save_{sym}"):
           st.session_state.portfolio[sym]["qty"] = up_qty
           st.session_state.portfolio[sym]["manual_price"] = up_price
-          st.session_state[edit_key] = False
+          st.rerun()
+      with ecols[3]:
+        st.write("")
+        if st.button("❌ Rimuovi", key=f"del_{sym}"):
+          del st.session_state.portfolio[sym]
           st.rerun()
 
-    st.divider()
+  st.divider()
 
+  # Sotto: Cedole e Simulazione Monte Carlo con PAC
   st.subheader("Cedole e dividendi, prossimi 12 mesi")
   total_dividends_est = 0
   div_records = []
@@ -438,116 +478,4 @@ with tab_portafoglio:
 
     pessimistic = np.percentile(simulations, 10, axis=1)
     neutral = np.percentile(simulations, 50, axis=1)
-    optimistic = np.percentile(simulations, 90, axis=1)
-    invested_capital = [
-        total_net_worth + (monthly_contrib * m) for m in range(months)
-    ]
-
-    col_res1, col_res2, col_res3 = st.columns(3)
-    col_res1.metric(
-        "Pessimista (10° perc.)", f"{pessimistic[-1]:,.0f} €".replace(",", ".")
-    )
-    col_res2.metric(
-        "Neutro (Mediana)", f"{neutral[-1]:,.0f} €".replace(",", ".")
-    )
-    col_res3.metric(
-        "Ottimista (90° perc.)", f"{optimistic[-1]:,.0f} €".replace(",", ".")
-    )
-
-    fig = go.Figure()
-    x_axis = np.arange(months) / 12
-    fig.add_trace(
-        go.Scatter(
-            x=x_axis,
-            y=optimistic,
-            mode="lines",
-            name="Ottimista (90°)",
-            line=dict(color="#238636"),
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=x_axis,
-            y=neutral,
-            mode="lines",
-            name="Neutro (50°)",
-            line=dict(color="#1f6feb", width=3),
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=x_axis,
-            y=pessimistic,
-            mode="lines",
-            name="Pessimista (10°)",
-            line=dict(color="#da3633"),
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=x_axis,
-            y=invested_capital,
-            mode="lines",
-            name="Capitale Versato",
-            line=dict(dash="dash", color="#8b9499"),
-        )
-    )
-
-    fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="#161b22",
-        plot_bgcolor="#161b22",
-        xaxis_title="Anni",
-        yaxis_title="Valore (€)",
-        legend=dict(
-            orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
-        ),
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-# 3. TAB WATCHLIST
-with tab_watchlist:
-  st.markdown(
-      """
-        <div style="background: linear-gradient(135deg, #d97706, #78350f); padding: 25px; border-radius: 12px; margin-bottom: 20px;">
-            <h1 style="color: white; margin: 0;">Watchlist</h1>
-            <p style="color: #fef3c7; margin: 5px 0 0 0;">Monitora i titoli di tuo interesse con prezzi in tempo reale</p>
-        </div>
-    """,
-      unsafe_allow_html=True,
-  )
-
-  selected_wl = st.selectbox(
-      "Seleziona Lista", list(st.session_state.watchlists.keys())
-  )
-
-  with st.form("add_wl_form"):
-    col_w1, col_w2 = st.columns([3, 1])
-    with col_w1:
-      new_wl_ticker = st.text_input("Aggiungi Ticker (es. BTP-2067, TSLA)")
-    with col_w2:
-      submitted_wl = st.form_submit_button("Aggiungi")
-      if submitted_wl and new_wl_ticker:
-        if (
-            new_wl_ticker.upper()
-            not in st.session_state.watchlists[selected_wl]
-        ):
-          st.session_state.watchlists[selected_wl].append(
-              new_wl_ticker.upper()
-          )
-          st.rerun()
-
-  for sym in st.session_state.watchlists[selected_wl]:
-    price, change = get_ticker_data(sym)
-    price_str = f"{price:,.2f} €" if price else "n.d."
-    change_str = f"{change:+.2f}%" if change is not None else ""
-
-    cols = st.columns([3, 2, 1])
-    with cols[0]:
-      st.markdown(f"**{sym}**")
-    with cols[1]:
-      st.markdown(f"{price_str} ({change_str})")
-    with cols[2]:
-      if st.button("❌", key=f"del_wl_{sym}"):
-        st.session_state.watchlists[selected_wl].remove(sym)
-        st.rerun()
+    optimistic = np.percentile(simulations, 90, axis
