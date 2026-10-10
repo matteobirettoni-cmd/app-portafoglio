@@ -12,14 +12,23 @@ st.set_page_config(
     page_title="Portfolio & Market Monitor", page_icon="📈", layout="wide"
 )
 
-# Stile CSS personalizzato per ottimizzazione mobile
+# Stile CSS personalizzato per ottimizzazione mobile estrema
 st.markdown(
     """
     <style>
     .stApp { background-color: #0e1117; color: #ffffff; }
-    .market-card-pos { background-color: #113822; padding: 15px; border-radius: 8px; border-left: 5px solid #238636; margin-bottom: 10px; }
-    .market-card-neg { background-color: #3b171c; padding: 15px; border-radius: 8px; border-left: 5px solid #da3633; margin-bottom: 10px; }
-    .asset-row { background-color: #161b22; padding: 10px 12px; border-radius: 8px; border: 1px solid #30363d; margin-bottom: 6px; }
+    .market-card-pos { background-color: #113822; padding: 12px; border-radius: 8px; border-left: 4px solid #238636; margin-bottom: 8px; }
+    .market-card-neg { background-color: #3b171c; padding: 12px; border-radius: 8px; border-left: 4px solid #da3633; margin-bottom: 8px; }
+    
+    /* Riduce drasticamente la dimensione dei bottoni (matita e x) su mobile */
+    div.stButton > button {
+        padding: 2px 6px !important;
+        font-size: 12px !important;
+        min-height: 28px !important;
+        max-height: 32px !important;
+        line-height: 1 !important;
+        border-radius: 6px !important;
+    }
     </style>
 """,
     unsafe_allow_html=True,
@@ -205,9 +214,9 @@ with tab_mercati:
 
   st.markdown(
       f"""
-        <div style="background: {header_bg}; padding: 25px; border-radius: 12px; margin-bottom: 20px;">
-            <h1 style="color: white; margin: 0;">Mercati</h1>
-            <p style="color: #c9d1d9; margin: 5px 0 0 0;">Panoramica in tempo reale dei principali indici, materie prime e crypto</p>
+        <div style="background: {header_bg}; padding: 20px; border-radius: 10px; margin-bottom: 15px;">
+            <h1 style="color: white; margin: 0; font-size: 24px;">Mercati</h1>
+            <p style="color: #c9d1d9; margin: 5px 0 0 0; font-size: 13px;">Panoramica in tempo reale</p>
         </div>
     """,
       unsafe_allow_html=True,
@@ -225,11 +234,10 @@ with tab_mercati:
       st.markdown(
           f"""
             <div class="{card_class}">
-                <h3 style="margin:0; color: white;">{name}</h3>
-                <p style="margin:2px 0; color: #8b94e0; font-size: 12px;">Indice / Materia Prima</p>
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
-                    <span style="font-size: 20px; font-weight: bold; color: white;">{price:,.2f}</span>
-                    <span style="font-size: 16px; font-weight: bold; color: {color};">{sign}{change:.2f}%</span>
+                <h4 style="margin:0; color: white; font-size: 14px;">{name}</h4>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
+                    <span style="font-size: 16px; font-weight: bold; color: white;">{price:,.2f}</span>
+                    <span style="font-size: 13px; font-weight: bold; color: {color};">{sign}{change:.2f}%</span>
                 </div>
             </div>
         """,
@@ -287,37 +295,33 @@ with tab_portafoglio:
 
   st.markdown(
       f"""
-        <div style="background: linear-gradient(135deg, #1f6feb, #113822); padding: 25px; border-radius: 12px; margin-bottom: 20px;">
-            <h3 style="color: #8b94e0; margin: 0;">Patrimonio netto</h3>
-            <h1 style="color: white; margin: 5px 0; font-size: 38px;">{total_net_worth:,.2f} €</h1>
-            <p style="color: {chg_color}; margin: 0; font-size: 16px; font-weight: bold;">
-                Variazione odierna: {chg_sign}{total_daily_change_eur:,.2f} € ({chg_sign}{portfolio_daily_pct:.2f}%)
+        <div style="background: linear-gradient(135deg, #1f6feb, #113822); padding: 20px; border-radius: 10px; margin-bottom: 15px;">
+            <h3 style="color: #8b94e0; margin: 0; font-size: 14px;">Patrimonio netto</h3>
+            <h1 style="color: white; margin: 4px 0; font-size: 32px;">{total_net_worth:,.2f} €</h1>
+            <p style="color: {chg_color}; margin: 0; font-size: 14px; font-weight: bold;">
+                Oggi: {chg_sign}{total_daily_change_eur:,.2f} € ({chg_sign}{portfolio_daily_pct:.2f}%)
             </p>
-            <p style="color: #c9d1d9; margin: 5px 0 0 0; font-size: 13px;">{len(st.session_state.portfolio)} titoli monitorati</p>
         </div>
     """,
       unsafe_allow_html=True,
   )
 
-  st.subheader("Posizioni in Portafoglio")
+  st.subheader("Posizioni")
 
   with st.form("add_position_form"):
-    col_a, col_b, col_c, col_d, col_e = st.columns([2, 2, 1, 1, 1])
+    col_a, col_b = st.columns(2)
     with col_a:
       new_ticker = st.text_input("Ticker / ISIN")
-    with col_b:
-      new_name = st.text_input("Nome")
-    with col_c:
       new_qty = st.number_input(
           "Quantità / Lotti", min_value=0.0, value=1.0, step=1.0
       )
-    with col_d:
-      new_is_bond = st.checkbox("Obbligazione/BTP?")
-    with col_e:
+    with col_b:
+      new_name = st.text_input("Nome")
       new_manual_price = st.number_input(
           "Prezzo Man. (€ o %)", min_value=0.0, value=0.0, step=0.01
       )
 
+    new_is_bond = st.checkbox("Obbligazione/BTP?")
     submitted = st.form_submit_button("Aggiungi Posizione")
     if submitted and new_ticker:
       st.session_state.portfolio[new_ticker.upper()] = {
@@ -329,6 +333,9 @@ with tab_portafoglio:
       save_portfolio(st.session_state.portfolio)
       st.rerun()
 
+  st.markdown("<hr style='margin: 8px 0; border-color: #30363d;'>", unsafe_allow_html=True)
+
+  # Visualizzazione ultra-compatta ottimizzata per mobile (Ticker grande, tutto su singola riga di riepilogo + bottoni piccoli)
   for item in portfolio_items:
     sym = item["ticker"]
     chg = item["change"]
@@ -343,14 +350,16 @@ with tab_portafoglio:
     if edit_key not in st.session_state:
       st.session_state[edit_key] = False
 
-    cols = st.columns([2.4, 1.8, 0.4, 0.4])
+    # Colonne snelle: Info asset | Variazione % | Matita | Elimina
+    cols = st.columns([4.3, 1.5, 0.35, 0.35], gap="small")
     with cols[0]:
       st.markdown(
           f"""
-            <div style="font-size: 13px;">
-                <b>{sym}</b>{badge}<br>
-                <span style="font-size: 11px; color: #8b9499;">{item['name']}</span><br>
-                <span style="font-size: 11px; color: #c9d1d9;">Qt: {item['qty']} | Tot: <b>{item['valore']:,.0f} €</b></span>
+            <div style="font-size: 15px; font-weight: bold; color: #ffffff; line-height: 1.2;">
+                {sym}{badge} <span style="font-size: 13px; color: #58a6ff; font-weight: bold;">{item['valore']:,.0f} €</span>
+            </div>
+            <div style="font-size: 11px; color: #8b9499; margin-top: 2px;">
+                Qt: {item['qty']} &bull; Prezzo: {p_display}
             </div>
             """,
           unsafe_allow_html=True,
@@ -358,9 +367,8 @@ with tab_portafoglio:
     with cols[1]:
       st.markdown(
           f"""
-            <div style="text-align: right; font-size: 13px;">
-                <span style="color: {c_col}; font-weight: bold;">{c_sign}{chg:.2f}%</span><br>
-                <b>{p_display}</b>
+            <div style="text-align: right; font-size: 13px; font-weight: bold; color: {c_col}; padding-top: 4px;">
+                {c_sign}{chg:.2f}%
             </div>
             """,
           unsafe_allow_html=True,
@@ -378,7 +386,7 @@ with tab_portafoglio:
     if st.session_state[edit_key]:
       with st.container():
         st.markdown(
-            f"<div style='background-color: #161b22; padding: 10px; border-radius: 6px; border: 1px solid #30363d; margin-bottom: 6px;'>"
+            f"<div style='background-color: #161b22; padding: 8px; border-radius: 6px; border: 1px solid #30363d; margin: 4px 0;'>"
             f"<span style='font-size:12px; color:#8b94e0; font-weight:bold;'>Modifica {sym}</span>"
             f"</div>",
             unsafe_allow_html=True,
@@ -402,7 +410,7 @@ with tab_portafoglio:
           )
         with ec3:
           st.write("")
-          if st.button("💾", key=f"save_{sym}", use_container_width=True):
+          if st.button("💾 Salva", key=f"save_{sym}", use_container_width=True):
             st.session_state.portfolio[sym]["qty"] = up_q
             st.session_state.portfolio[sym]["manual_price"] = up_p
             save_portfolio(st.session_state.portfolio)
@@ -754,10 +762,10 @@ with tab_portafoglio:
 with tab_watchlist:
   st.markdown(
       '<div style="background: linear-gradient(135deg, #d97706, #78350f);'
-      ' padding: 25px; border-radius: 12px; margin-bottom: 20px;"><h1'
-      ' style="color: white; margin: 0;">Watchlist</h1><p style="color:'
-      ' #fef3c7; margin: 5px 0 0 0;">Monitora i titoli di tuo interesse con'
-      ' prezzi in tempo reale</p></div>',
+      ' padding: 20px; border-radius: 10px; margin-bottom: 15px;"><h1'
+      ' style="color: white; margin: 0; font-size: 24px;">Watchlist</h1><p'
+      ' style="color: #fef3c7; margin: 5px 0 0 0; font-size: 13px;">Monitora'
+      ' i titoli di tuo interesse</p></div>',
       unsafe_allow_html=True,
   )
 
