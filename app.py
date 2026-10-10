@@ -175,6 +175,9 @@ if "show_pac" not in st.session_state:
 if "show_fire" not in st.session_state:
   st.session_state.show_fire = False
 
+if "show_add_form" not in st.session_state:
+  st.session_state.show_add_form = False
+
 if "pac_excluded" not in st.session_state:
   st.session_state.pac_excluded = []
 
@@ -309,37 +312,50 @@ with tab_portafoglio:
       unsafe_allow_html=True,
   )
 
-  st.subheader("Posizioni")
+  # Pulsante a scomparsa per aggiungere una nuova posizione
+  btn_label = (
+      "❌ Chiudi Modulo Aggiunta"
+      if st.session_state.show_add_form
+      else "➕ Aggiungi Posizione"
+  )
+  if st.button(btn_label, type="primary", use_container_width=True):
+    st.session_state.show_add_form = not st.session_state.show_add_form
+    st.rerun()
 
-  with st.form("add_position_form"):
-    col_a, col_b = st.columns(2)
-    with col_a:
-      new_ticker = st.text_input("Ticker / ISIN")
-      new_qty = st.number_input(
-          "Quantità / Lotti", min_value=0.0, value=1.0, step=1.0
-      )
-    with col_b:
-      new_name = st.text_input("Nome")
-      new_manual_price = st.number_input(
-          "Prezzo Man. (€ o %)", min_value=0.0, value=0.0, step=0.01
-      )
+  if st.session_state.show_add_form:
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.subheader("Nuova Posizione")
+    with st.form("add_position_form"):
+      col_a, col_b = st.columns(2)
+      with col_a:
+        new_ticker = st.text_input("Ticker / ISIN")
+        new_qty = st.number_input(
+            "Quantità / Lotti", min_value=0.0, value=1.0, step=1.0
+        )
+      with col_b:
+        new_name = st.text_input("Nome")
+        new_manual_price = st.number_input(
+            "Prezzo Man. (€ o %)", min_value=0.0, value=0.0, step=0.01
+        )
 
-    new_is_bond = st.checkbox("Obbligazione/BTP?")
-    submitted = st.form_submit_button("Aggiungi Posizione")
-    if submitted and new_ticker:
-      st.session_state.portfolio[new_ticker.upper()] = {
-          "qty": new_qty,
-          "name": new_name or new_ticker,
-          "is_bond": new_is_bond,
-          "manual_price": new_manual_price,
-      }
-      save_portfolio(st.session_state.portfolio)
-      st.rerun()
+      new_is_bond = st.checkbox("Obbligazione/BTP?")
+      submitted = st.form_submit_button("Conferma e Salva Posizione")
+      if submitted and new_ticker:
+        st.session_state.portfolio[new_ticker.upper()] = {
+            "qty": new_qty,
+            "name": new_name or new_ticker,
+            "is_bond": new_is_bond,
+            "manual_price": new_manual_price,
+        }
+        save_portfolio(st.session_state.portfolio)
+        st.session_state.show_add_form = False
+        st.rerun()
 
   st.markdown(
-      "<hr style='margin: 8px 0; border-color: #30363d;'>",
+      "<hr style='margin: 12px 0; border-color: #30363d;'>",
       unsafe_allow_html=True,
   )
+  st.subheader("Posizioni")
 
   # Layout: Sinistra (Ticker + Prezzo, sotto Qt + Controvalore) | Centro (Variazione %) | Destra (Solo Matita)
   for item in portfolio_items:
