@@ -377,5 +377,236 @@ with tab_portafoglio:
             step=1.0,
         )
       with ecols[1]:
+        default_price = (
+            float(item["manual_price"])
+            if item["manual_price"] > 0
+            else float(item["price"])
+        )
         up_price = st.number_input(
-            "
+            "Prezzo manuale (€ o %)",
+            value=default_price,
+            key=f"up_p_{sym}",
+            step=0.01,
+        )
+      with ecols[2]:
+        st.write("")
+        if st.button("💾 Salva", key=f"save_{sym}"):
+          st.session_state.portfolio[sym]["qty"] = up_qty
+          st.session_state.portfolio[sym]["manual_price"] = up_price
+          st.rerun()
+      with ecols[3]:
+        st.write("")
+        if st.button("❌ Rimuovi", key=f"del_{sym}"):
+          del st.session_state.portfolio[sym]
+          st.rerun()
+
+  st.divider()
+
+  st.subheader("Cedole e dividendi, prossimi 12 mesi")
+  total_dividends_est = 0
+  div_records = []
+  for sym, data in st.session_state.portfolio.items():
+    is_bond = data.get("is_bond", False)
+    if is_bond:
+      nominale = data["qty"] * 1000.0
+      est_div = nominale * 0.028
+    else:
+      last_div = get_upcoming_dividends(sym)
+      est_div = last_div * 4 * data["qty"] if last_div > 0 else 0.0
+
+    if est_div > 0:
+      total_dividends_est += est_div
+      div_records.append(
+          {"Titolo": sym, "Cedola/Dividendo Stimato": f"{est_div:,.2f} €"}
+      )
+
+  st.markdown(f"### Totale stimato: **{total_dividends_est:,.0f} €**")
+  if div_records:
+    st.dataframe(pd.DataFrame(div_records), use_container_width=True)
+  else:
+    st.info("Nessun dividendo o cedola rilevata per i titoli inseriti.")
+
+  st.divider()
+
+  st.subheader("Simulatore Monte Carlo con PAC")
+  col_m1, col_m2, col_m3 = st.columns(3)
+  with col_m1:
+    pac_amount = st.number_input("Importo PAC (€)", value=300)
+  with col_m2:
+    pac_freq = st.selectbox(
+        "Frequenza", ["Mensile", "Settimanale", "Trimestrale"]
+    )
+  with col_m3:
+    years = st.number_input("Anni", min_value=1, max_value=40, value=20)
+
+  if st.button("🚀 Simula (3.000 scenari)", type="primary"):
+    np.random.seed(42)
+    n_sims = 3000
+    months = int(years * 12)
+    monthly_contrib = (
+        pac_amount
+        if pac_freq == "Mensile"
+        else (pac_amount * 4 if pac_freq == "Settimanale" else pac_amount / 3)
+    )
+
+    expected_return = 0.073
+    volatility = 0.157
+    dt = 1 / 12
+
+    simulations = np.zeros((months, n_sims))
+    simulations[0, :] = total_net_worth
+
+    for m in range(1, months):
+      rand_normals = np.random.normal(0, 1, n_sims)
+      growth = (
+          simulations[m - 1, :]
+          * (
+              1
+              + expected_return * dt
+              + volatility * np.sqrt(dt) * rand_normals
+          )
+          + monthly_contrib
+      )
+      simulations[m, :] = growth
+
+    pessimistic = np.percentile(simulations, 10, axis=1)
+    neutral = np.percentile(simulations, 50, axis=1)
+    optimistic = np.percentile(simulations, 90, axis=1)
+    invested_capital = [
+        total_net_worth + (monthly_contrib * m) for m in range(months)
+    ]
+
+    col_res1, col_res2, col_res3 = st.columns(3)
+    col_res1.metric(
+        "Pessimista (10° perc.)", f"{pessimistic[-1]:,.0f} €".replace(",", ".")
+    )
+    col_res2.metric(
+        "Neutro (Mediana)", f"{neutral[-1]:,.0f} €".replace(",", ".")
+    )
+    col_res3.metric(
+        "Ottimista (90° perc.)", f"{optimistic[-1]:,.0f} €".replace(",", ".")
+    )
+
+    fig = go.Figure()
+    x_axis = np.arange(months) / 12
+    fig.add_trace(
+        go.Scatter(
+            x=x_axis,
+            y=optimistic,
+            mode="lines",
+            name="Ottimista (90°)",
+            line=dict(color="#238636"),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x_axis,
+            y=neutral,
+            mode="lines",
+            name="Neutro (50°)",
+            line=dict(color="#1f6feb", width=3),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x_axis,
+            y=pessimistic,
+            mode="lines",
+            name="Pessimista (10°)",
+            line=dict(color="#da3633"),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x_axis,
+            y=invested_capital,
+            mode="lines",
+            name="Capitale Versato",
+            line=dict(dash="dash", color="#8b9499"),
+        )
+    )
+
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#161b22",
+        plot_bgcolor="#161b22",
+        xaxis_title="Anni",
+        yaxis_title="Valore (€)",
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+        ),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+# 3. TAB WATCHLIST
+with tab_watchlist:
+  st.markdown(
+      """
+        <div style="background: linear-gradient(135deg, #d97706, #78350f); padding: 25px; border-radius: 12px; margin-bottom: 20px;">
+            <h1 style="color: white; margin: 0;">Watchlist</h1>
+            <p style="color: #fef3c7; margin: 5px 0 0 0;">Monitora i titoli di tuo interesse con prezzi in tempo reale</p>
+        </div>
+    """,
+      unsafe_allow_html=True,
+  )
+
+  selected_wl = st.selectbox(
+      "Seleziona Lista", list(st.session_state.watchlists.keys())
+  )
+
+  with st.form("add_wl_form"):
+    col_w1, col_w2 = st.columns([3, 1])
+    with col_w1:
+      new_wl_ticker = st.text_input("Aggiungi Ticker (es. BTP-2067, TSLA)")
+    with col_w2:
+      submitted_wl = st.form_submit_button("Aggiungi")
+      if submitted_wl and new_wl_ticker:
+        if (
+            new_wl_ticker.upper()
+            not in st.session_state.watchlists[selected_wl]
+        ):
+          st.session_state.watchlists[selected_wl].append(
+              new_wl_ticker.upper()
+          )
+          st.rerun()
+
+  wl_table_html = """
+    <div class="table-container">
+        <table class="custom-table">
+            <thead>
+                <tr>
+                    <th>Ticker</th>
+                    <th>Prezzo Attuale</th>
+                    <th>Var. Oggi</th>
+                </tr>
+            </thead>
+            <tbody>
+    """
+
+  for sym in st.session_state.watchlists[selected_wl]:
+    price, change = get_ticker_data(sym)
+    p_str = f"{price:,.2f} €" if price else "n.d."
+    c_val = change if change is not None else 0.0
+    c_sign = "+" if c_val >= 0 else ""
+    c_col = "#3fb950" if c_val >= 0 else "#f85149"
+
+    wl_table_html += f"""
+        <tr>
+            <td><b>{sym}</b></td>
+            <td><b>{p_str}</b></td>
+            <td><span style="color: {c_col}; font-weight:bold;">{c_sign}{c_val:.2f}%</span></td>
+        </tr>
+    """
+
+  wl_table_html += """
+            </tbody>
+        </table>
+    </div>
+    """
+  st.markdown(wl_table_html, unsafe_allow_html=True)
+
+  st.markdown("##### Gestisci elementi Watchlist")
+  for sym in st.session_state.watchlists[selected_wl]:
+    if st.button(f"❌ Rimuovi {sym}", key=f"del_wl_{sym}"):
+      st.session_state.watchlists[selected_wl].remove(sym)
+      st.rerun()
