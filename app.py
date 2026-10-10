@@ -62,22 +62,6 @@ def get_ticker_data(ticker_symbol):
   return 100.0, 0.0
 
 
-# Funzione per prossimi dividendi/cedole
-@st.cache_data(ttl=3600)
-def get_upcoming_dividends(ticker_symbol):
-  clean_sym = ticker_symbol.upper().strip()
-  if "BTP" in clean_sym or "IT000" in clean_sym:
-    return 1.4
-  try:
-    t = yf.Ticker(clean_sym)
-    divs = t.dividends
-    if not divs.empty:
-      return float(divs.iloc[-1])
-  except Exception:
-    pass
-  return 0.0
-
-
 # Inizializzazione Sessione con il tuo portafoglio
 if "portfolio" not in st.session_state:
   st.session_state.portfolio = {
@@ -395,25 +379,45 @@ with tab_portafoglio:
 
   st.divider()
 
-  st.subheader("Cedole e dividendi, prossimi 12 mesi")
-  total_dividends_est = 0
+  # Sezione Cedole e Dividendi (prossimi 6 mesi)
+  st.subheader("Cedole e dividendi, prossimi 6 mesi")
+  total_dividends_net_est = 0
   div_records = []
+
   for sym, data in st.session_state.portfolio.items():
     is_bond = data.get("is_bond", False)
-    if is_bond:
+    sym_upper = sym.upper()
+
+    if sym_upper == "GOLD":
+      est_net = 0.0
+      div_str = "0,00 € (Accumulazione)"
+    elif is_bond or "BTP" in sym_upper or "IT000" in sym_upper:
       nominale = data["qty"] * 1000.0
-      est_div = nominale * 0.028
-    else:
-      last_div = get_upcoming_dividends(sym)
-      est_div = last_div * 4 * data["qty"] if last_div > 0 else 0.0
-
-    if est_div > 0:
-      total_dividends_est += est_div
-      div_records.append(
-          {"Titolo": sym, "Cedola/Dividendo Stimato": f"{est_div:,.2f} €"}
+      # Cedola annua 2.8%, semestrale quindi divisa per 2 o calcolata annuale lordo/netto
+      gross_annual = nominale * 0.028
+      net_annual = gross_annual * 0.875  # tassazione 12.5%
+      est_net = net_annual  # o semestrale se preferito
+      div_str = (
+          f"{gross_annual:,.2f} € (netti {net_annual:,.2f} €) [Cedola"
+          " semestrale]"
       )
+    else:
+      if sym_upper == "ISP.MI":
+        est_net = (data["qty"] / 250.0) * 47.0
+      else:
+        est_net = data["qty"] * 1.5  placeholder generico se non specificato
+      div_str = f"{est_net:,.2f} €"
 
-  st.markdown(f"### Totale stimato: **{total_dividends_est:,.0f} €**")
+    if sym_upper != "GOLD":
+      total_dividends_net_est += est_net
+
+    div_records.append(
+        {"Titolo": sym, "Cedola/Dividendo Stimato (6 mesi)": div_str}
+    )
+
+  st.markdown(
+      f"### Totale stimato netto: **{total_dividends_net_est:,.2f} €**"
+  )
   if div_records:
     st.dataframe(
         pd.DataFrame(div_records), use_container_width=True, hide_index=True
