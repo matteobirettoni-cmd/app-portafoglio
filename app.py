@@ -379,52 +379,6 @@ with tab_portafoglio:
 
   st.divider()
 
-  # Sezione Cedole e Dividendi (prossimi 6 mesi)
-  st.subheader("Cedole e dividendi, prossimi 6 mesi")
-  total_dividends_net_est = 0
-  div_records = []
-
-  for sym, data in st.session_state.portfolio.items():
-    is_bond = data.get("is_bond", False)
-    sym_upper = sym.upper()
-
-    if sym_upper == "GOLD":
-      est_net = 0.0
-      div_str = "0,00 € (Accumulazione)"
-    elif is_bond or "BTP" in sym_upper or "IT000" in sym_upper:
-      nominale = data["qty"] * 1000.0
-      # Cedola annua 2.8%, semestrale (quindi metà nei 6 mesi)
-      gross_annual = nominale * 0.028
-      gross_sem = gross_annual / 2.0
-      net_sem = gross_sem * 0.875  # tassazione 12.5%
-      est_net = net_sem
-      div_str = f"{gross_sem:,.2f} € (netti {net_sem:,.2f} €) [Cedola semestrale]"
-    else:
-      if sym_upper == "ISP.MI":
-        est_net = (data["qty"] / 250.0) * 47.0
-      else:
-        est_net = data["qty"] * 1.5  # Placeholder generico
-      div_str = f"{est_net:,.2f} €"
-
-    if sym_upper != "GOLD":
-      total_dividends_net_est += est_net
-
-    div_records.append(
-        {"Titolo": sym, "Cedola/Dividendo Stimato (6 mesi)": div_str}
-    )
-
-  st.markdown(
-      f"### Totale stimato netto: **{total_dividends_net_est:,.2f} €**"
-  )
-  if div_records:
-    st.dataframe(
-        pd.DataFrame(div_records), use_container_width=True, hide_index=True
-    )
-  else:
-    st.info("Nessun dividendo o cedola rilevata per i titoli inseriti.")
-
-  st.divider()
-
   st.subheader("Simulatore Monte Carlo con PAC")
   col_m1, col_m2, col_m3 = st.columns(3)
   with col_m1:
