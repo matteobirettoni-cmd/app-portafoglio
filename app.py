@@ -701,5 +701,72 @@ with tab_portafoglio:
           if reached:
             years_needed = months_needed / 12.0
             retire_age = current_age + years_needed
-            st.success(
-                f"🎉 [{scenario_choice}] Raggiungeresti il traguardo FIRE tra
+            success_msg = (
+                f"🎉 [{scenario_choice}] Raggiungeresti il traguardo FIRE tra "
+                f"**{years_needed:.1f} anni** (all'età di **{retire_age:.1f} anni**)!"
+            )
+            st.success(success_msg)
+
+            progress_pct = min(1.0, total_net_worth / target_at_reach)
+            st.progress(
+                progress_pct,
+                text=(
+                    f"Progresso attuale: {total_net_worth:,.0f} € /"
+                    f" {target_at_reach:,.0f} € ({progress_pct*100:.1f}%)"
+                ),
+            )
+          else:
+            st.warning(
+                f"Con lo scenario [{scenario_choice}] e il PAC impostato, il"
+                " traguardo FIRE richiede più di 70 anni. Prova ad aumentare"
+                " l'importo del PAC."
+            )
+
+# 3. TAB WATCHLIST
+with tab_watchlist:
+  st.markdown(
+      """
+        <div style="background: linear-gradient(135deg, #d97706, #78350f); padding: 25px; border-radius: 12px; margin-bottom: 20px;">
+            <h1 style="color: white; margin: 0;">Watchlist</h1>
+            <p style="color: #fef3c7; margin: 5px 0 0 0;">Monitora i titoli di tuo interesse con prezzi in tempo reale</p>
+        </div>
+    """,
+      unsafe_allow_html=True,
+  )
+
+  selected_wl = st.selectbox(
+      "Seleziona Lista", list(st.session_state.watchlists.keys())
+  )
+
+  with st.form("add_wl_form"):
+    col_w1, col_w2 = st.columns([3, 1])
+    with col_w1:
+      new_wl_ticker = st.text_input("Aggiungi Ticker (es. BTP-2067, TSLA)")
+    with col_w2:
+      submitted_wl = st.form_submit_button("Aggiungi")
+      if submitted_wl and new_wl_ticker:
+        if (
+            new_wl_ticker.upper()
+            not in st.session_state.watchlists[selected_wl]
+        ):
+          st.session_state.watchlists[selected_wl].append(
+              new_wl_ticker.upper()
+          )
+          st.rerun()
+
+  for sym in st.session_state.watchlists[selected_wl]:
+    price, change = get_ticker_data(sym)
+    p_str = f"{price:,.2f} €" if price else "n.d."
+    c_val = change if change is not None else 0.0
+    c_sign = "+" if c_val >= 0 else ""
+    c_col = "#3fb950" if c_val >= 0 else "#f85149"
+
+    cols_w = st.columns([3.4, 0.6])
+    with cols_w[0]:
+      st.markdown(
+          f"""
+            <div style="background-color: #161b22; padding: 10px 12px; border-radius: 8px; border: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center;">
+                <div><b>{sym}</b></div>
+                <div style="text-align: right;">
+                    <b>{p_str}</b><br>
+                    <span style="
