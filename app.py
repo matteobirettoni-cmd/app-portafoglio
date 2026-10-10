@@ -20,14 +20,22 @@ st.markdown(
     .market-card-pos { background-color: #113822; padding: 12px; border-radius: 8px; border-left: 4px solid #238636; margin-bottom: 8px; }
     .market-card-neg { background-color: #3b171c; padding: 12px; border-radius: 8px; border-left: 4px solid #da3633; margin-bottom: 8px; }
     
-    /* Riduce la dimensione dei bottoni per allineamento compatto sulla stessa riga */
-    div.stButton > button {
-        padding: 1px 3px !important;
-        font-size: 10px !important;
+    /* Stile per i mini-pulsanti d'azione inline */
+    .inline-btn-form { display: inline-block; margin: 0; padding: 0; }
+    .inline-btn-form button {
+        padding: 2px 5px !important;
+        font-size: 11px !important;
         min-height: 22px !important;
         max-height: 26px !important;
         line-height: 1 !important;
         border-radius: 4px !important;
+        background-color: #21262d !important;
+        color: #c9d1d9 !important;
+        border: 1px solid #30363d !important;
+    }
+    .inline-btn-form button:hover {
+        background-color: #30363d !important;
+        color: #ffffff !important;
     }
     </style>
 """,
@@ -338,7 +346,7 @@ with tab_portafoglio:
       unsafe_allow_html=True,
   )
 
-  # Layout ultracompatto: proporzioni ristrette per mantenere i bottoni sulla stessa riga
+  # Layout a 2 colonne in cui a destra inseriamo un blocco flessibile forzato sulla stessa riga
   for item in portfolio_items:
     sym = item["ticker"]
     chg = item["change"]
@@ -353,33 +361,34 @@ with tab_portafoglio:
     if edit_key not in st.session_state:
       st.session_state[edit_key] = False
 
-    cols = st.columns([3.4, 1.1, 1.1], gap="small")
+    cols = st.columns([3.8, 2.2], gap="small")
     with cols[0]:
       st.markdown(
           f"""
-            <div style="font-size: 13px; line-height: 1.2;">
-                <b>{sym}{badge}</b> <span style="color: #8b9499; font-size: 11px;">{p_display}</span><br>
+            <div style="font-size: 13px; line-height: 1.3;">
+                <b>{sym}{badge}</b> <span style="color: #8b9499; font-size: 11px; margin-left: 4px;">{p_display}</span><br>
                 <span style="font-size: 11px; color: #c9d1d9;">Qt: {item['qty']} | Tot: <b>{item['valore']:,.0f} €</b></span>
             </div>
             """,
           unsafe_allow_html=True,
       )
     with cols[1]:
+      # Contenitore flessibile HTML per mantenere percentuale, matita e X rigorosamente sulla stessa riga a destra
       st.markdown(
           f"""
-            <div style="text-align: right; font-size: 12px; font-weight: bold; color: {c_col}; padding-top: 4px;">
-                {c_sign}{chg:.2f}%
+            <div style="display: flex; justify-content: flex-end; align-items: center; gap: 6px; padding-top: 4px;">
+                <span style="font-size: 12px; font-weight: bold; color: {c_col};">{c_sign}{chg:.2f}%</span>
             </div>
             """,
           unsafe_allow_html=True,
       )
-    with cols[2]:
-      b_cols = st.columns(2, gap="small")
-      with b_cols[0]:
+      # Bottoni inline affiancati tramite colonne minuscole e senza margini
+      b1, b2 = st.columns(2, gap="small")
+      with b1:
         if st.button("✏️", key=f"btn_edit_{sym}", help="Modifica"):
           st.session_state[edit_key] = not st.session_state[edit_key]
           st.rerun()
-      with b_cols[1]:
+      with b2:
         if st.button("❌", key=f"btn_del_{sym}", help="Rimuovi"):
           del st.session_state.portfolio[sym]
           save_portfolio(st.session_state.portfolio)
