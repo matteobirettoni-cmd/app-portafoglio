@@ -594,9 +594,11 @@ with tab_portafoglio:
 
       st.markdown("<br>", unsafe_allow_html=True)
 
-      # Pulsante per attivare il Simulatore FIRE sotto i grafici/controlli PAC
+      # Pulsante per visibilità Simulatore FIRE
       if st.button(
-          "🔥 Calcola Obiettivo FIRE", type="secondary", use_container_width=True
+          "🔥 Mostra/Nascondi Simulatore FIRE",
+          type="secondary",
+          use_container_width=True,
       ):
         st.session_state.show_fire = not st.session_state.show_fire
         st.rerun()
@@ -608,24 +610,30 @@ with tab_portafoglio:
         f_col1, f_col2, f_col3 = st.columns(3)
         with f_col1:
           fire_monthly_exp = st.number_input(
-              "Spesa mensile des. (€)", value=1500.0, step=100.0
+              "Spesa mensile des. (€)",
+              value=1500.0,
+              step=100.0,
+              key="fire_exp",
           )
         with f_col2:
           current_age = st.number_input(
-              "Età attuale", min_value=18, max_value=90, value=30
+              "Età attuale", min_value=18, max_value=90, value=30, key="fire_age"
           )
         with f_col3:
           swr = (
-              st.selectbox("Prelievo sicuro (SWR)", ["4%", "3.5%", "3%"])
+              st.selectbox(
+                  "Prelievo sicuro (SWR)", ["4%", "3.5%", "3%"], key="fire_swr"
+              )
               .replace("%", "")
               .strip()
           )
           swr_val = float(swr) / 100.0
 
-        # Parametri Inflazione e Scenari
         fc_inf1, fc_inf2, fc_scen = st.columns(3)
         with fc_inf1:
-          use_inflation = st.checkbox("Includi inflazione stimata", value=True)
+          use_inflation = st.checkbox(
+              "Includi inflazione stimata", value=True, key="fire_use_inf"
+          )
         with fc_inf2:
           inflation_rate = (
               st.number_input(
@@ -634,6 +642,7 @@ with tab_portafoglio:
                   max_value=10.0,
                   value=2.0,
                   step=0.1,
+                  key="fire_inf_rate",
               )
               if use_inflation
               else 0.0
@@ -642,72 +651,71 @@ with tab_portafoglio:
           scenario_choice = st.selectbox(
               "Scenario Rendimento",
               ["Neutro (Mediana)", "Pessimista (10°)", "Ottimista (90°)"],
+              key="fire_scenario",
           )
 
-        # Regolazione rendimento in base allo scenario selezionato
-        if "Pessimista" in scenario_choice:
-          eff_return = weighted_return - weighted_vol
-        elif "Ottimista" in scenario_choice:
-          eff_return = weighted_return + weighted_vol
-        else:
-          eff_return = weighted_return
+        # Pulsante dedicato al calcolo/aggiornamento del FIRE
+        if st.button("🔥 Calcola Obiettivo FIRE", type="primary"):
+          if "Pessimista" in scenario_choice:
+            eff_return = weighted_return - weighted_vol
+          elif "Ottimista" in scenario_choice:
+            eff_return = weighted_return + weighted_vol
+          else:
+            eff_return = weighted_return
 
-        inf_val = (inflation_rate / 100.0) if use_inflation else 0.0
-        real_return = eff_return - inf_val
-        real_m_return = real_return / 12.0
+          inf_val = (inflation_rate / 100.0) if use_inflation else 0.0
+          base_fire_target = fire_monthly_exp * 12 * (1.0 / swr_val)
 
-        # FIRE Target iniziale
-        base_fire_target = fire_monthly_exp * 12 * (1.0 / swr_val)
-        st.markdown(f"#### 🎯 Tuo FIRE Number iniziale: **{base_fire_target:,.0f} €**")
+          st.markdown(
+              f"#### 🎯 Tuo FIRE Number iniziale: **{base_fire_target:,.0f} €**"
+          )
 
-        # Calcolo mensile con inflazione dinamica e scenario
-        val = total_net_worth
-        months_needed = 0
-        reached = False
-        target_at_reach = base_fire_target
-
-        if val >= base_fire_target:
-          reached = True
+          val = total_net_worth
           months_needed = 0
-        else:
-          for m in range(1, 12 * 70):
-            # Calcolo target che cresce con l'inflazione se abilitata
-            cur_target = base_fire_target * ((1 + inf_val) ** (m / 12.0))
-            val = val * (1 + (eff_return / 12.0)) + monthly_contrib
-            if val >= cur_target:
-              months_needed = m
-              target_at_reach = cur_target
-              reached = True
-              break
+          reached = False
+          target_at_reach = base_fire_target
 
-        if reached:
-          years_needed = months_needed / 12.0
-          retire_age = current_age + years_needed
-          st.success(
-              f"🎉 [{scenario_choice}] Raggiungeresti il traguardo FIRE tra"
-              f" **{years_needed:.1f} anni** (all'età di **{retire_age:.1f}"
-              f" anni**)!"
-          )
-          if use_inflation:
-            st.caption(
-                f"Obiettivo FIRE rivalutato per inflazione all'anno di arrivo:"
-                f" {target_at_reach:,.0f} €"
+          if val >= base_fire_target:
+            reached = True
+            months_needed = 0
+          else:
+            for m in range(1, 12 * 70):
+              cur_target = base_fire_target * ((1 + inf_val) ** (m / 12.0))
+              val = val * (1 + (eff_return / 12.0)) + monthly_contrib
+              if val >= cur_target:
+                months_needed = m
+                target_at_reach = cur_target
+                reached = True
+                break
+
+          if reached:
+            years_needed = months_needed / 12.0
+            retire_age = current_age + years_needed
+            st.success(
+                f"🎉 [{scenario_choice}] Raggiungeresti il traguardo FIRE tra"
+                f" **{years_needed:.1f} anni** (all'età di **{retire_age:.1f}"
+                f" anni**)!"
             )
+            if use_inflation:
+              st.caption(
+                  "Obiettivo FIRE rivalutato per inflazione all'anno di"
+                  f" arrivo: {target_at_reach:,.0f} €"
+              )
 
-          progress_pct = min(1.0, total_net_worth / target_at_reach)
-          st.progress(
-              progress_pct,
-              text=(
-                  f"Progresso attuale: {total_net_worth:,.0f} € /"
-                  f" {target_at_reach:,.0f} € ({progress_pct*100:.1f}%)"
-              ),
-          )
-        else:
-          st.warning(
-              f"Con lo scenario [{scenario_choice}] e il PAC impostato, il"
-              " traguardo FIRE richiede più di 70 anni. Prova ad aumentare"
-              " l'importo del PAC."
-          )
+            progress_pct = min(1.0, total_net_worth / target_at_reach)
+            st.progress(
+                progress_pct,
+                text=(
+                    f"Progresso attuale: {total_net_worth:,.0f} € /"
+                    f" {target_at_reach:,.0f} € ({progress_pct*100:.1f}%)"
+                ),
+            )
+          else:
+            st.warning(
+                f"Con lo scenario [{scenario_choice}] e il PAC impostato, il"
+                " traguardo FIRE richiede più di 70 anni. Prova ad aumentare"
+                " l'importo del PAC."
+            )
 
 # 3. TAB WATCHLIST
 with tab_watchlist:
