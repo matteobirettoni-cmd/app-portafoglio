@@ -23,18 +23,10 @@ st.markdown(
 )
 
 
-# Funzione dati da yfinance con supporto manuale per i BTP
+# Funzione dati da yfinance
 @st.cache_data(ttl=300)
 def get_ticker_data(ticker_symbol):
-  manual_prices = {
-      "BTP-2067": (63.85, 0.0),
-      "IT0005217390": (63.85, 0.0),
-  }
-
   clean_sym = ticker_symbol.upper().strip()
-  if clean_sym in manual_prices:
-    return manual_prices[clean_sym]
-
   try:
     t = yf.Ticker(clean_sym)
     hist = t.history(period="5d")
@@ -59,7 +51,7 @@ def get_ticker_data(ticker_symbol):
       "ISP.MI": (3.5, 0.1),
       "GOLD": (145.0, 0.2),
   }
-  return defaults.get(clean_sym, (50.0, 0.0))
+  return defaults.get(clean_sym, (100.0, 0.0))
 
 
 # Funzione per prossimi dividendi/cedole
@@ -67,9 +59,7 @@ def get_ticker_data(ticker_symbol):
 def get_upcoming_dividends(ticker_symbol):
   clean_sym = ticker_symbol.upper().strip()
   if "BTP" in clean_sym or "IT000" in clean_sym:
-    return (
-        1.4  # Cedola semestrale indicativa in percentuale o importo fisso
-    )
+    return 1.4
   try:
     t = yf.Ticker(clean_sym)
     divs = t.dividends
@@ -80,25 +70,38 @@ def get_upcoming_dividends(ticker_symbol):
   return 0.0
 
 
-# Inizializzazione Sessione (con flag is_bond per i BTP)
+# Inizializzazione Sessione (con supporto per prezzo manuale preimpostato)
 if "portfolio" not in st.session_state:
   st.session_state.portfolio = {
       "VWCE.MI": {
           "qty": 22.0,
           "name": "Vanguard FTSE All-World",
           "is_bond": False,
+          "manual_price": 0.0,
       },
       "SWDA.MI": {
           "qty": 87.0,
           "name": "iShares Core MSCI World",
           "is_bond": False,
+          "manual_price": 0.0,
       },
-      "ISP.MI": {"qty": 250.0, "name": "Intesa Sanpaolo", "is_bond": False},
-      "GOLD": {"qty": 10.0, "name": "Amundi Physical Gold", "is_bond": False},
-      "BTP-2067": {
+      "ISP.MI": {
+          "qty": 250.0,
+          "name": "Intesa Sanpaolo",
+          "is_bond": False,
+          "manual_price": 0.0,
+      },
+      "GOLD": {
           "qty": 10.0,
-          "name": "BTP Tf 2.8% Mz67 (10 lotti = 10k)",
+          "name": "Amundi Physical Gold",
+          "is_bond": False,
+          "manual_price": 0.0,
+      },
+      "BTP-2067": {
+          "qty": 14.0,
+          "name": "BTP Tf 2.8% Mz67",
           "is_bond": True,
+          "manual_price": 63.85,
       },
   }
 
@@ -172,13 +175,17 @@ with tab_portafoglio:
   total_net_worth = 0
   portfolio_items = []
   for sym, data in st.session_state.portfolio.items():
-    price, _ = get_ticker_data(sym)
-    if price is None or np.isnan(price):
-      price = 100.0
+    manual_p = data.get("manual_price", 0.0)
+    if manual_p > 0:
+      price = manual_p
+      change = 0.0
+    else:
+      price, change = get_ticker_data(sym)
+      if price is None or np.isnan(price):
+        price = 100.0
 
     is_bond = data.get("is_bond", False)
     if is_bond:
-      # Per i bond, la quantità inserita rappresenta i lotti da 1000€, il prezzo è in percentuale
       nominale = data["qty"] * 1000.0
       valore = nominale * (price / 100.0)
     else:
@@ -206,9 +213,9 @@ with tab_portafoglio:
   st.subheader("Posizioni in Portafoglio")
 
   with st.form("add_position_form"):
-    col_a, col_b, col_c, col_d = st.columns([2, 2, 1, 1])
+    col_a, col_b, col_c, col_d, col_e = st.columns([2, 2, 1, 1, 1])
     with col_a:
-      new_ticker = st.text_input("Ticker / ISIN / BTP (es. BTP-2067)")
+      new_ticker = st.text_input("Ticker / ISIN (es. BTP-2067, AAPL)")
     with col_b:
       new_name = st.text_input("Nome Descrittivo")
     with col_c:
@@ -216,9 +223,14 @@ with tab_portafoglio:
           "Quantità / Lotti", min_value=0.0, value=1.0, step=1.0
       )
     with col_d:
-      new_is_bond = st.checkbox(
-          "È Obbligazione / BTP?",
-          help="Se spuntato, la quantità viene moltiplicata per 1.000€ e il prezzo è considerato in percentuale",
+      new_is_bond = st.checkbox("È Obbligazione/BTP?")
+    with col_e:
+      new_manual_price = st.number_input(
+          "Prezzo Manuale (€ o %)",
+          min_value=0.0,
+          value=0.0,
+          step=0.01,
+          help="Se inserito (>0), l'app usa questo prezzo e ignora Yahoo Finance",
       )
 
     submitted = st.form_submit_button("Aggiungi Posizione")
@@ -227,6 +239,7 @@ with tab_portafoglio:
           "qty": new_qty,
           "name": new_name or new_ticker,
           "is_bond": new_is_bond,
+          "manual_price": new_manual_price,
       }
       st.rerun()
 
@@ -272,17 +285,15 @@ with tab_portafoglio:
   total_dividends_est = 0
   div_records = []
   for sym, data in st.session_state.portfolio.items():
-    last_div = get_upcoming_dividends(sym)
-    if last_div > 0:
-      is_bond = data.get("is_bond", False)
-      if is_bond:
-        # Calcolo cedola bond (es. 2.8% annuo sul nominale)
-        nominale = data["qty"] * 1000.0
-        est_div = nominale * 0.028  # 2.8% di cedola annua sul BTP-2067 di esempio
-      else:
-        annual_div_per_share = last_div * 4
-        est_div = annual_div_per_share * data["qty"]
+    is_bond = data.get("is_bond", False)
+    if is_bond:
+      nominale = data["qty"] * 1000.0
+      est_div = nominale * 0.028  # 2.8% cedola
+    else:
+      last_div = get_upcoming_dividends(sym)
+      est_div = last_div * 4 * data["qty"] if last_div > 0 else 0.0
 
+    if est_div > 0:
       total_dividends_est += est_div
       div_records.append(
           {"Titolo": sym, "Cedola/Dividendo Stimato": f"{est_div:,.2f} €"}
