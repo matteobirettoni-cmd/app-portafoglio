@@ -357,7 +357,7 @@ with tab_portafoglio:
   )
   st.subheader("Posizioni")
 
-  # Layout ottimizzato: Spazi spostati più a sinistra e font percentuale ingrandito
+  # Layout: Sinistra (Ticker + Prezzo, sotto Qt + Controvalore) | Centro (Variazione %) | Destra (Solo Matita)
   for item in portfolio_items:
     sym = item["ticker"]
     chg = item["change"]
@@ -372,7 +372,7 @@ with tab_portafoglio:
     if edit_key not in st.session_state:
       st.session_state[edit_key] = False
 
-    cols = st.columns([4.8, 1.5, 0.7], gap="small")
+    cols = st.columns([3.5, 1.8, 0.7], gap="small")
     with cols[0]:
       st.markdown(
           f"""
@@ -386,7 +386,7 @@ with tab_portafoglio:
     with cols[1]:
       st.markdown(
           f"""
-            <div style="text-align: center; font-size: 16px; font-weight: bold; color: {c_col}; padding-top: 4px;">
+            <div style="text-align: center; font-size: 13px; font-weight: bold; color: {c_col}; padding-top: 6px;">
                 {c_sign}{chg:.2f}%
             </div>
             """,
@@ -512,3 +512,325 @@ with tab_portafoglio:
         )
         if st.button("🔄 Ripristina tutti i titoli esclusi"):
           st.session_state.pac_excluded = []
+          st.rerun()
+
+      sum_raw = sum(raw_weights.values())
+      if sum_raw > 0:
+        pac_weights = {k: v / sum_raw for k, v in raw_weights.items()}
+      else:
+        pac_weights = {}
+
+      weighted_return = 0.0
+      weighted_vol = 0.0
+      for sym, w in pac_weights.items():
+        data = st.session_state.portfolio[sym]
+        is_bond = data.get("is_bond", False)
+        if is_bond:
+          name_str = data.get("name", "")
+          match = re.search(r"(\d+[\.,]?\d*)\s*%", name_str)
+          gross_coupon = (
+              float(match.group(1).replace(",", ".")) if match else 2.5
+          )
+          net_coupon = gross_coupon * 0.875
+          cur_price = data.get("manual_price", 0.0)
+          if cur_price <= 0:
+            cur_price = 100.0
+          r = (net_coupon / cur_price) if cur_price > 0 else 0.035
+          r = max(r, 0.02)
+          v = 0.06
+        elif "GOLD" in sym.upper():
+          r, v = 0.06, 0.15
+        else:
+          r, v = 0.08, 0.16
+        weighted_return += w * r
+        weighted_vol += w * v
+
+      monthly_contrib = (
+          pac_amount
+          if pac_freq == "Mensile"
+          else (pac_amount * 4 if pac_freq == "Settimanale" else pac_amount / 3)
+      )
+
+      if st.button("🚀 Avvia Simulazione (3.000 scenari)", type="secondary"):
+        if not pac_weights:
+          st.warning("Seleziona una percentuale valida per i titoli del PAC.")
+        else:
+          np.random.seed(42)
+          n_sims = 3000
+          months = int(years * 12)
+          dt = 1 / 12
+          simulations = np.zeros((months, n_sims))
+          simulations[0, :] = total_net_worth
+
+          for m in range(1, months):
+            rand_normals = np.random.normal(0, 1, n_sims)
+            growth = (
+                simulations[m - 1, :]
+                * (
+                    1
+                    + weighted_return * dt
+                    + weighted_vol * np.sqrt(dt) * rand_normals
+                )
+                + monthly_contrib
+            )
+            simulations[m, :] = growth
+
+          pessimistic = np.percentile(simulations, 10, axis=1)
+          neutral = np.percentile(simulations, 50, axis=1)
+          optimistic = np.percentile(simulations, 90, axis=1)
+          invested_capital = [
+              total_net_worth + (monthly_contrib * m) for m in range(months)
+          ]
+
+          col_res1, col_res2, col_res3 = st.columns(3)
+          col_res1.metric(
+              "Pessimista (10° perc.)",
+              f"{pessimistic[-1]:,.0f} €".replace(",", "."),
+          )
+          col_res2.metric(
+              "Neutro (Mediana)", f"{neutral[-1]:,.0f} €".replace(",", ".")
+          )
+          col_res3.metric(
+              "Ottimista (90° perc.)",
+              f"{optimistic[-1]:,.0f} €".replace(",", "."),
+          )
+
+          fig = go.Figure()
+          x_axis = np.arange(months) / 12
+          fig.add_trace(
+              go.Scatter(
+                  x=x_axis,
+                  y=optimistic,
+                  mode="lines",
+                  name="Ottimista (90°)",
+                  line=dict(color="#238636"),
+              )
+          )
+          fig.add_trace(
+              go.Scatter(
+                  x=x_axis,
+                  y=neutral,
+                  mode="lines",
+                  name="Neutro (50°)",
+                  line=dict(color="#1f6feb", width=3),
+              )
+          )
+          fig.add_trace(
+              go.Scatter(
+                  x=x_axis,
+                  y=pessimistic,
+                  mode="lines",
+                  name="Pessimista (10°)",
+                  line=dict(color="#da3633"),
+              )
+          )
+          fig.add_trace(
+              go.Scatter(
+                  x=x_axis,
+                  y=invested_capital,
+                  mode="lines",
+                  name="Capitale Versato",
+                  line=dict(dash="dash", color="#8b9499"),
+              )
+          )
+
+          fig.update_layout(
+              template="plotly_dark",
+              paper_bgcolor="#161b22",
+              plot_bgcolor="#161b22",
+              xaxis_title="Anni",
+              yaxis_title="Valore (€)",
+              legend=dict(
+                  orientation="h",
+                  yanchor="bottom",
+                  y=1.02,
+                  xanchor="right",
+                  x=1,
+              ),
+          )
+          st.plotly_chart(fig, use_container_width=True)
+
+      st.markdown("<br>", unsafe_allow_html=True)
+
+      # Pulsante per visibilità Simulatore FIRE
+      if st.button(
+          "🔥 Mostra/Nascondi Simulatore FIRE",
+          type="secondary",
+          use_container_width=True,
+      ):
+        st.session_state.show_fire = not st.session_state.show_fire
+        st.rerun()
+
+      if st.session_state.show_fire:
+        st.markdown(
+            "### 🔥 Simulatore FIRE (Financial Independence, Retire Early)"
+        )
+        f_col1, f_col2, f_col3 = st.columns(3)
+        with f_col1:
+          fire_monthly_exp = st.number_input(
+              "Spesa mensile des. (€)",
+              value=1150.0,
+              step=50.0,
+              key="fire_exp",
+          )
+        with f_col2:
+          current_age = st.number_input(
+              "Età attuale", min_value=18, max_value=90, value=30, key="fire_age"
+          )
+        with f_col3:
+          swr = (
+              st.selectbox(
+                  "Prelievo sicuro (SWR)", ["4%", "3.5%", "3%"], key="fire_swr"
+              )
+              .replace("%", "")
+              .strip()
+          )
+          swr_val = float(swr) / 100.0
+
+        fc_inf1, fc_inf2, fc_scen = st.columns(3)
+        with fc_inf1:
+          use_inflation = st.checkbox(
+              "Includi inflazione stimata", value=True, key="fire_use_inf"
+          )
+        with fc_inf2:
+          inflation_rate = (
+              st.number_input(
+                  "Inflazione annua (%)",
+                  min_value=0.0,
+                  max_value=10.0,
+                  value=2.0,
+                  step=0.1,
+                  key="fire_inf_rate",
+              )
+              if use_inflation
+              else 0.0
+          )
+        with fc_scen:
+          scenario_choice = st.selectbox(
+              "Scenario Rendimento",
+              ["Neutro (Mediana)", "Pessimista (10°)", "Ottimista (90°)"],
+              key="fire_scenario",
+          )
+
+        # Pulsante dedicato al calcolo/aggiornamento del FIRE
+        if st.button("🔥 Calcola Obiettivo FIRE", type="primary"):
+          if "Pessimista" in scenario_choice:
+            eff_return = weighted_return - weighted_vol
+          elif "Ottimista" in scenario_choice:
+            eff_return = weighted_return + weighted_vol
+          else:
+            eff_return = weighted_return
+
+          inf_val = (inflation_rate / 100.0) if use_inflation else 0.0
+          base_fire_target = fire_monthly_exp * 12 * (1.0 / swr_val)
+
+          val = total_net_worth
+          months_needed = 0
+          reached = False
+          target_at_reach = base_fire_target
+
+          if val >= base_fire_target:
+            reached = True
+            months_needed = 0
+          else:
+            for m in range(1, 12 * 70):
+              cur_target = base_fire_target * ((1 + inf_val) ** (m / 12.0))
+              val = val * (1 + (eff_return / 12.0)) + monthly_contrib
+              if val >= cur_target:
+                months_needed = m
+                target_at_reach = cur_target
+                reached = True
+                break
+
+          if use_inflation:
+            st.markdown(
+                f"#### 🎯 Tuo FIRE Number target (in valuta futura):"
+                f" **{target_at_reach:,.0f} €**"
+            )
+            st.caption(
+                f"Capitale in valuta attuale (senza inflazione):"
+                f" {base_fire_target:,.0f} €"
+            )
+          else:
+            st.markdown(
+                f"#### 🎯 Tuo FIRE Number target: **{base_fire_target:,.0f} €**"
+            )
+
+          if reached:
+            years_needed = months_needed / 12.0
+            retire_age = current_age + years_needed
+            success_msg = (
+                f"🎉 [{scenario_choice}] Raggiungeresti il traguardo FIRE tra"
+                f" **{years_needed:.1f} anni** (all'età di **{retire_age:.1f}"
+                " anni**)!"
+            )
+            st.success(success_msg)
+
+            progress_pct = min(1.0, total_net_worth / target_at_reach)
+            st.progress(
+                progress_pct,
+                text=(
+                    f"Progresso attuale: {total_net_worth:,.0f} € /"
+                    f" {target_at_reach:,.0f} € ({progress_pct*100:.1f}%)"
+                ),
+            )
+          else:
+            st.warning(
+                f"Con lo scenario [{scenario_choice}] e il PAC impostato, il"
+                " traguardo FIRE richiede più di 70 anni. Prova ad aumentare"
+                " l'importo del PAC."
+            )
+
+# 3. TAB WATCHLIST
+with tab_watchlist:
+  st.markdown(
+      '<div style="background: linear-gradient(135deg, #d97706, #78350f);'
+      ' padding: 20px; border-radius: 10px; margin-bottom: 15px;"><h1'
+      ' style="color: white; margin: 0; font-size: 24px;">Watchlist</h1><p'
+      ' style="color: #fef3c7; margin: 5px 0 0 0; font-size: 13px;">Monitora'
+      ' i titoli di tuo interesse</p></div>',
+      unsafe_allow_html=True,
+  )
+
+  selected_wl = st.selectbox(
+      "Seleziona Lista", list(st.session_state.watchlists.keys())
+  )
+
+  with st.form("add_wl_form"):
+    col_w1, col_w2 = st.columns([3, 1])
+    with col_w1:
+      new_wl_ticker = st.text_input("Aggiungi Ticker (es. BTP-2067, TSLA)")
+    with col_w2:
+      submitted_wl = st.form_submit_button("Aggiungi")
+      if submitted_wl and new_wl_ticker:
+        if (
+            new_wl_ticker.upper()
+            not in st.session_state.watchlists[selected_wl]
+        ):
+          st.session_state.watchlists[selected_wl].append(
+              new_wl_ticker.upper()
+          )
+          st.rerun()
+
+  for sym in st.session_state.watchlists[selected_wl]:
+    price, change = get_ticker_data(sym)
+    p_str = f"{price:,.2f} €" if price else "n.d."
+    c_val = change if change is not None else 0.0
+    c_sign = "+" if c_val >= 0 else ""
+    c_col = "#3fb950" if c_val >= 0 else "#f85149"
+
+    cols_w = st.columns([3.4, 0.6])
+    with cols_w[0]:
+      st.markdown(
+          f'<div style="background-color: #161b22; padding: 10px 12px;'
+          ' border-radius: 8px; border: 1px solid #30363d; display: flex;'
+          f' justify-content: space-between; align-items: center;"><div><b>{sym}</b></div><div'
+          f' style="text-align: right;"><b>{p_str}</b><br><span'
+          f' style="color: {c_col}; font-weight: bold; font-size:'
+          f' 11px;">{c_sign}{c_val:.2f}%</span></div></div>',
+          unsafe_allow_html=True,
+      )
+    with cols_w[1]:
+      if st.button("❌", key=f"del_wl_{sym}", help="Rimuovi"):
+        st.session_state.watchlists[selected_wl].remove(sym)
+        st.rerun()
