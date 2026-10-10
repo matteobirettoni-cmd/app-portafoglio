@@ -142,8 +142,8 @@ if "show_fire" not in st.session_state:
 if "pac_excluded" not in st.session_state:
   st.session_state.pac_excluded = []
 
-tab_mercati, tab_portafoglio, tab_watchlist = st.tabs(
-    ["Mercati", "Portafoglio", "Watchlist"]
+tab_mercati, tab_portafoglio, tab_watchlist, tab_notizie = st.tabs(
+    ["Mercati", "Portafoglio", "Watchlist", "Notizie"]
 )
 
 market_symbols = {
@@ -776,3 +776,81 @@ with tab_watchlist:
       if st.button("❌", key=f"del_wl_{sym}", help="Rimuovi"):
         st.session_state.watchlists[selected_wl].remove(sym)
         st.rerun()
+
+# 4. TAB NOTIZIE
+with tab_notizie:
+  st.markdown(
+      '<div style="background: linear-gradient(135deg, #1f2937, #111827);'
+      ' padding: 25px; border-radius: 12px; margin-bottom: 20px;"><h1'
+      ' style="color: white; margin: 0;">Notizie Finanziarie</h1><p'
+      ' style="color: #c9d1d9; margin: 5px 0 0 0;">Aggiornamenti in tempo reale'
+      ' dai titoli in portafoglio e dai mercati globali</p></div>',
+      unsafe_allow_html=True,
+  )
+
+
+  @st.cache_data(ttl=600)
+  def fetch_portfolio_news(portfolio_keys):
+    all_news = []
+    # Unisce i titoli del portafoglio con alcuni indici chiave di mercato
+    symbols_to_query = list(portfolio_keys) + [
+        "^FTSEMIB",
+        "^GSPC",
+        "^STOXX50E",
+    ]
+    for sym in symbols_to_query:
+      try:
+        t = yf.Ticker(sym)
+        news_items = t.news
+        if news_items:
+          for item in news_items[:3]:  # Prende le prime 3 notizie per ticker
+            title = item.get("title", "")
+            publisher = item.get("publisher", "")
+            link = item.get("link", "")
+            pub_time = item.get("providerPublishTime", 0)
+            if title and link:
+              all_news.append({
+                  "title": title,
+                  "publisher": publisher,
+                  "link": link,
+                  "time": pub_time,
+                  "source_sym": sym,
+              })
+      except Exception:
+        pass
+
+    # Rimuove duplicati in base al titolo
+    unique = {}
+    for n in all_news:
+      if n["title"] not in unique:
+        unique[n["title"]] = n
+
+    # Ordina per timestamp discendente
+    sorted_news = sorted(
+        unique.values(), key=lambda x: x["time"], reverse=True
+    )
+    return sorted_news[:25]
+
+
+  news_data = fetch_portfolio_news(st.session_state.portfolio.keys())
+
+  if news_data:
+    for news in news_data:
+      pub_date = (
+          pd.to_datetime(news["time"], unit="s").strftime("%d/%m/%Y %H:%M")
+          if news["time"] > 0
+          else ""
+      )
+      st.markdown(
+          f'<div style="background-color: #161b22; padding: 12px 15px; border-radius: 8px; border: 1px solid #30363d; margin-bottom: 10px;">'
+          f'<span style="font-size: 11px; color: #8b94e0; font-weight: bold;">{news["source_sym"]}</span> &bull; '
+          f'<span style="font-size: 11px; color: #8b9499;">{news["publisher"]} ({pub_date})</span><br>'
+          f'<a href="{news["link"]}" target="_blank" style="color: #58a6ff; font-size: 14px; text-decoration: none; font-weight: 500;">{news["title"]}</a>'
+          f"</div>",
+          unsafe_allow_html=True,
+      )
+  else:
+    st.info(
+        "Nessuna notizia disponibile al momento o connessione Yahoo Finance"
+        " temporaneamente limitata."
+    )
