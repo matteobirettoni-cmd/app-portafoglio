@@ -3,13 +3,14 @@ import os
 import re
 import numpy as np
 import pandas as pd
+import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
 
 # Configurazione pagina
 st.set_page_config(
-    page_title="Portfolio & Market Monitor", page_icon="📈", layout="wide"
+    page_title="Il Mio Portafoglio", page_icon="📈", layout="wide"
 )
 
 # Stile CSS personalizzato per ottimizzazione mobile estrema
@@ -181,8 +182,8 @@ if "show_add_form" not in st.session_state:
 if "pac_excluded" not in st.session_state:
   st.session_state.pac_excluded = []
 
-tab_mercati, tab_portafoglio, tab_watchlist = st.tabs(
-    ["Mercati", "Portafoglio", "Watchlist"]
+tab_mercati, tab_portafoglio, tab_analisi, tab_watchlist = st.tabs(
+    ["Mercati", "Portafoglio", "Analisi", "Watchlist"]
 )
 
 market_symbols = {
@@ -357,7 +358,6 @@ with tab_portafoglio:
   )
   st.subheader("Posizioni")
 
-  # Layout: Sinistra (Ticker + Prezzo, sotto Qt + Controvalore) | Centro (Variazione %) | Destra (Solo Matita)
   for item in portfolio_items:
     sym = item["ticker"]
     chg = item["change"]
@@ -372,7 +372,7 @@ with tab_portafoglio:
     if edit_key not in st.session_state:
       st.session_state[edit_key] = False
 
-    cols = st.columns([3.5, 1.8, 0.7], gap="small")
+    cols = st.columns([4.8, 1.5, 0.7], gap="small")
     with cols[0]:
       st.markdown(
           f"""
@@ -386,7 +386,7 @@ with tab_portafoglio:
     with cols[1]:
       st.markdown(
           f"""
-            <div style="text-align: center; font-size: 13px; font-weight: bold; color: {c_col}; padding-top: 6px;">
+            <div style="text-align: center; font-size: 16px; font-weight: bold; color: {c_col}; padding-top: 4px;">
                 {c_sign}{chg:.2f}%
             </div>
             """,
@@ -397,7 +397,6 @@ with tab_portafoglio:
         st.session_state[edit_key] = not st.session_state[edit_key]
         st.rerun()
 
-    # Pannello a comparsa con Modifica e Pulsante X di eliminazione
     if st.session_state[edit_key]:
       with st.container():
         st.markdown(
@@ -781,7 +780,112 @@ with tab_portafoglio:
                 " l'importo del PAC."
             )
 
-# 3. TAB WATCHLIST
+# 3. TAB ANALISI
+with tab_analisi:
+  st.markdown(
+      '<div style="background: linear-gradient(135deg, #7c3aed, #4c1d95);'
+      ' padding: 20px; border-radius: 10px; margin-bottom: 15px;"><h1'
+      ' style="color: white; margin: 0; font-size: 24px;">Analisi Portafoglio</h1><p'
+      ' style="color: #ede9fe; margin: 5px 0 0 0; font-size: 13px;">Suddivisione'
+      ' percentuale e livello di bilanciamento</p></div>',
+      unsafe_allow_html=True,
+  )
+
+  if total_net_worth > 0 and portfolio_items:
+    # Preparazione dati per il grafico a torta
+    df_analysis = pd.DataFrame(portfolio_items)
+
+    # Categoria Macro automatica basata su ticker o flag
+    def classify_asset(row):
+      s = row["ticker"].upper()
+      if row["is_bond"] or "BTP" in s or "BOND" in s:
+        return "Obbligazioni / BTP"
+      elif "GOLD" in s:
+        return "Materie Prime (Oro)"
+      elif "SWDA" in s or "ACT" in s or "WLD" in s:
+        return "Azionario Globale"
+      elif "USA" in s or "NDX" in s or "2K" in s:
+        return "Azionario USA"
+      elif "XMME" in s:
+        return "Azionario Emergenti"
+      else:
+        return "Azionario / Altro"
+
+    df_analysis["Macro"] = df_analysis.apply(classify_asset, axis=1)
+
+    # Grafico a torta per singoli Ticker
+    st.subheader("📊 Ripartizione per Ticker")
+    fig_ticker = px.pie(
+        df_analysis,
+        names="ticker",
+        values="valore",
+        hole=0.4,
+        color_discrete_sequence=px.colors.qualitative.Prism,
+    )
+    fig_ticker.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#161b22",
+        plot_bgcolor="#161b22",
+        margin=dict(t=10, b=10, l=10, r=10),
+    )
+    st.plotly_chart(fig_ticker, use_container_width=True)
+
+    # Grafico a torta per Categorie Macro (Azioni, Bond, Oro)
+    st.subheader("🌍 Ripartizione per Macro-Asset")
+    macro_grouped = (
+        df_analysis.groupby("Macro")["valore"].sum().reset_index()
+    )
+    fig_macro = px.pie(
+        macro_grouped,
+        names="Macro",
+        values="valore",
+        hole=0.4,
+        color_discrete_sequence=px.colors.qualitative.Safe,
+    )
+    fig_macro.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#161b22",
+        plot_bgcolor="#161b22",
+        margin=dict(t=10, b=10, l=10, r=10),
+    )
+    st.plotly_chart(fig_macro, use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("⚖️ Controllo Bilanciamento e Sovraesposizione")
+
+    # Logica di controllo intelligente
+    max_asset = df_analysis.loc[df_analysis["valore"].idxmax()]
+    max_pct = (max_asset["valore"] / total_net_worth) * 100
+
+    if max_pct > 35:
+      st.warning(
+          f"⚠️ **Attenzione alla concentrazione:** Il titolo"
+          f" **{max_asset['ticker']}** rappresenta il **{max_pct:.1f}%** del"
+          " tuo portafoglio totale. Una percentuale superiore al 35% su un"
+          " singolo strumento aumenta la sovraesposizione e la volatilità."
+      )
+    else:
+      st.success(
+          "✅ **Portafoglio ben diversificato:** Nessun singolo titolo supera"
+          " la soglia di guardia del 35% del patrimonio totale."
+      )
+
+    # Controllo Azionario vs Obbligazionario
+    bond_val = df_analysis[df_analysis["Macro"] == "Obbligazioni / BTP"][
+        "valore"
+    ].sum()
+    bond_pct = (bond_val / total_net_worth) * 100
+    equity_pct = 100.0 - bond_pct
+
+    st.info(
+        f"💡 **Asset Allocation:** Azionario ~{equity_pct:.1f}% | Obbligazionario"
+        f" / Altro ~{bond_pct:.1f}%"
+    )
+
+  else:
+    st.info("Aggiungi almeno una posizione nel portafoglio per vedere l'analisi.")
+
+# 4. TAB WATCHLIST
 with tab_watchlist:
   st.markdown(
       '<div style="background: linear-gradient(135deg, #d97706, #78350f);'
