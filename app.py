@@ -336,7 +336,10 @@ with tab_portafoglio:
       with col_b:
         new_name = st.text_input("Nome")
         new_manual_price = st.number_input(
-            "Prezzo Man. (€ o %)", min_value=0.0, value=0.0, step=0.01
+            "Prezzo Man. (€ o % - 0=Auto)",
+            min_value=0.0,
+            value=0.0,
+            step=0.01,
         )
 
       new_is_bond = st.checkbox("Obbligazione/BTP?")
@@ -414,13 +417,12 @@ with tab_portafoglio:
               step=1.0,
           )
         with ec2:
-          default_p = (
-              float(item["manual_price"])
-              if item["manual_price"] > 0
-              else float(item["price"])
-          )
+          # Mantiene il vero stato del prezzo manuale (0 = automatico da Yahoo Finance)
           up_p = st.number_input(
-              "Prezzo (€ o %)", value=default_p, key=f"p_{sym}", step=0.01
+              "Prezzo Manuale (0 = Auto)",
+              value=float(item["manual_price"]),
+              key=f"p_{sym}",
+              step=0.01,
           )
 
         sub_c1, sub_c2 = st.columns(2)
@@ -792,10 +794,9 @@ with tab_analisi:
   )
 
   if total_net_worth > 0 and portfolio_items:
-    # Preparazione dati per il grafico a torta
     df_analysis = pd.DataFrame(portfolio_items)
 
-    # Categoria Macro automatica basata su ticker o flag
+
     def classify_asset(row):
       s = row["ticker"].upper()
       if row["is_bond"] or "BTP" in s or "BOND" in s:
@@ -811,9 +812,9 @@ with tab_analisi:
       else:
         return "Azionario / Altro"
 
+
     df_analysis["Macro"] = df_analysis.apply(classify_asset, axis=1)
 
-    # Grafico a torta per singoli Ticker
     st.subheader("📊 Ripartizione per Ticker")
     fig_ticker = px.pie(
         df_analysis,
@@ -830,7 +831,6 @@ with tab_analisi:
     )
     st.plotly_chart(fig_ticker, use_container_width=True)
 
-    # Grafico a torta per Categorie Macro (Azioni, Bond, Oro)
     st.subheader("🌍 Ripartizione per Macro-Asset")
     macro_grouped = (
         df_analysis.groupby("Macro")["valore"].sum().reset_index()
@@ -853,7 +853,6 @@ with tab_analisi:
     st.markdown("---")
     st.subheader("⚖️ Controllo Bilanciamento e Sovraesposizione")
 
-    # Logica di controllo intelligente
     max_asset = df_analysis.loc[df_analysis["valore"].idxmax()]
     max_pct = (max_asset["valore"] / total_net_worth) * 100
 
@@ -870,7 +869,6 @@ with tab_analisi:
           " la soglia di guardia del 35% del patrimonio totale."
       )
 
-    # Controllo Azionario vs Obbligazionario
     bond_val = df_analysis[df_analysis["Macro"] == "Obbligazioni / BTP"][
         "valore"
     ].sum()
