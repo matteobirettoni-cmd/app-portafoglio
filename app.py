@@ -45,6 +45,7 @@ PORTFOLIO_FILE = "portfolio.json"
 WATCHLIST_FILE = "watchlists.json"
 
 BOND = "Obbligazioni / BTP"
+CASH = "Liquidità"
 ASSET_CLASSES = [
     "Azionario Globale",
     "Azionario USA",
@@ -52,6 +53,7 @@ ASSET_CLASSES = [
     "Azionario Italia/Altro",
     "Materie Prime (Oro)",
     BOND,
+    CASH,
 ]
 # (rendimento atteso annuo, volatilità annua). Sono IPOTESI, non previsioni.
 # Per le obbligazioni il rendimento viene calcolato da cedola/prezzo/scadenza.
@@ -63,10 +65,62 @@ ASSUMPTIONS = {
     "Azionario Italia/Altro": (0.07, 0.20),
     "Materie Prime (Oro)": (0.04, 0.15),
     BOND: (None, 0.12),
+    CASH: (0.02, 0.005),
 }
 BOND_TAX = 0.125  # tassazione agevolata titoli di Stato
 CCY_SYMBOL = {"EUR": "€", "USD": "$", "GBP": "£", "GBp": "p"}
 GREEN, RED, GREY = "#3fb950", "#f85149", "#8b9499"
+
+NC, NA = "Non classificato", "Non applicabile"
+REGIONS = ["USA", "Europa (ex Italia)", "Italia", "Giappone", "Altri sviluppati", "Mercati emergenti", NC, NA]
+SECTORS = [
+    "Tecnologia", "Finanza", "Industria", "Beni ciclici", "Sanità", "Comunicazione",
+    "Beni difensivi", "Energia", "Materiali", "Utility", "Immobiliare", NC, NA,
+]
+SECTOR_WARN = 30.0  # soglia di allerta per un singolo settore (% dell'azionario)
+
+
+def _sec(tec, fin, ind, cic, san, com, dif, ene, mat, uti, imm):
+    return {"Tecnologia": tec, "Finanza": fin, "Industria": ind, "Beni ciclici": cic,
+            "Sanità": san, "Comunicazione": com, "Beni difensivi": dif, "Energia": ene,
+            "Materiali": mat, "Utility": uti, "Immobiliare": imm}
+
+
+def _reg(usa, eu, it, jp, oth, em):
+    return {"USA": usa, "Europa (ex Italia)": eu, "Italia": it, "Giappone": jp,
+            "Altri sviluppati": oth, "Mercati emergenti": em}
+
+
+# Valori APPROSSIMATI (da verificare sulle schede dei fornitori: cambiano ogni anno).
+# Chiave = ticker senza suffisso di borsa.
+EXPOSURE_DB = {
+    "SWDA": {"regions": _reg(71, 14.5, 0.5, 6, 8, 0), "sectors": _sec(26, 16, 11, 10, 10, 9, 6, 4, 3.5, 2.5, 2)},
+    "XWLD": {"regions": _reg(60, 21, 1, 8, 10, 0), "sectors": _sec(12, 22, 11, 6, 13, 7, 8, 7, 5, 4.5, 4.5)},
+    "XACT": {"regions": _reg(63, 13.5, 0.5, 5.5, 7.5, 10), "sectors": _sec(26, 16, 11, 11, 9, 8, 5.5, 4, 4, 2.5, 3)},
+    "XMME": {"regions": _reg(0, 0, 0, 0, 0, 100), "sectors": _sec(26, 22, 7, 12, 3.5, 9, 5, 5, 6, 2.5, 2)},
+    "XNDX": {"regions": _reg(100, 0, 0, 0, 0, 0), "sectors": _sec(55, 0.5, 4, 13, 5, 15, 5, 0.5, 0.5, 1.5, 0)},
+    "XUSE": {"regions": _reg(100, 0, 0, 0, 0, 0), "sectors": _sec(33, 13, 8.5, 10.5, 10, 10, 5, 3, 2.5, 2.5, 2)},
+    "XR2K": {"regions": _reg(100, 0, 0, 0, 0, 0), "sectors": _sec(14, 18, 18, 10, 16, 3, 3, 5, 4, 3, 6)},
+    "ISP": {"regions": _reg(0, 0, 100, 0, 0, 0), "sectors": _sec(0, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0)},
+}
+
+
+def default_exposure(sym, name, asset_class):
+    key = sym.upper().split(".")[0]
+    if key in EXPOSURE_DB:
+        return dict(EXPOSURE_DB[key]["regions"]), dict(EXPOSURE_DB[key]["sectors"])
+    if asset_class == BOND:
+        italy = "BTP" in f"{sym} {name}".upper()
+        return ({"Italia": 100.0} if italy else {NC: 100.0}), {NA: 100.0}
+    if asset_class in (CASH, "Materie Prime (Oro)"):
+        return {NA: 100.0}, {NA: 100.0}
+    return {NC: 100.0}, {NC: 100.0}
+
+
+def df_to_exposure(df, col):
+    vals = {r[col]: float(r["%"]) for _, r in df.iterrows() if float(r["%"]) > 0}
+    tot = sum(vals.values())
+    return {k: v / tot * 100 for k, v in vals.items()} if tot > 0 else {NC: 100.0}
 
 
 # ----------------------------------------------------------------------------
@@ -83,6 +137,8 @@ def eur(x, decimals=0):
 
 def guess_class(sym, name, is_bond):
     s = f"{sym} {name}".upper()
+    if sym.upper() == "CASH" or "LIQUIDIT" in s:
+        return CASH
     if is_bond or "BTP" in s or "BOND" in s:
         return BOND
     if "GOLD" in s or "ORO" in s:
@@ -153,10 +209,18 @@ def normalize_portfolio(port):
         d.setdefault("manual_price", 0.0)
         d.setdefault("avg_cost", 0.0)  # prezzo medio di carico (PMC)
         d.setdefault("force_manual", bool(d["is_bond"]))
+        if sym.upper() == "CASH":
+            d["force_manual"], d["manual_price"], d["is_bond"] = True, 1.0, False
         d.setdefault("coupon", None)
         d.setdefault("maturity_year", None)
         if d.get("asset_class") not in ASSET_CLASSES:
             d["asset_class"] = guess_class(sym, d["name"], d["is_bond"])
+        if not d.get("regions") or not d.get("sectors"):
+            reg, sec = default_exposure(sym, d["name"], d["asset_class"])
+            if not d.get("regions"):
+                d["regions"] = reg
+            if not d.get("sectors"):
+                d["sectors"] = sec
     return port
 
 
@@ -224,7 +288,8 @@ def build_positions(portfolio):
                 f = 1.0
             fx = f
         elif d["manual_price"] > 0:
-            price, change, source = d["manual_price"], None, "manuale"
+            price, change = d["manual_price"], None
+            source = "liquidità" if d["asset_class"] == CASH else "manuale"
             if not d["force_manual"]:
                 warns.append(f"{sym}: Yahoo non risponde, uso il prezzo manuale.")
         else:
@@ -299,6 +364,70 @@ def run_monte_carlo(start, contrib, mu, sigma, years, n=3000, seed=42):
     for m in range(1, months + 1):
         paths[m] = (paths[m - 1] + contrib) * factors[m - 1]
     return paths
+
+
+def aggregate_exposure(items, portfolio, field, only_equity):
+    """Somma in euro l'esposizione di ogni posizione (look-through)."""
+    tot = {}
+    for it in items:
+        if it["valore"] <= 0:
+            continue
+        if only_equity and not it["asset_class"].startswith("Azionario"):
+            continue
+        exp = portfolio[it["ticker"]].get(field) or {NC: 100.0}
+        s = sum(exp.values()) or 1.0
+        for k, v in exp.items():
+            tot[k] = tot.get(k, 0.0) + it["valore"] * v / s
+    return tot
+
+
+def render_exposure(label, data, bench, palette, max_weight=None):
+    total = sum(data.values())
+    if total <= 0:
+        st.info("Nessun dato disponibile.")
+        return
+    pct = {k: v / total * 100 for k, v in data.items() if v > 0}
+
+    df = pd.DataFrame({label: list(pct.keys()), "valore": list(pct.values())})
+    fig = px.pie(df, names=label, values="valore", hole=0.4, color_discrete_sequence=palette)
+    fig.update_layout(template="plotly_dark", paper_bgcolor="#161b22", plot_bgcolor="#161b22", margin=dict(t=10, b=10, l=10, r=10))
+    st.plotly_chart(fig, **STRETCH)
+
+    known = {k: v for k, v in pct.items() if k not in (NC, NA)}
+    kt = sum(known.values())
+    if kt > 0:
+        eff = 1.0 / sum((v / kt) ** 2 for v in known.values())
+        st.metric(f"Diversificazione effettiva ({label.lower()})", f"{eff:.1f}")
+        st.caption(f"Numero di {label.lower()} \"equivalenti\" se il peso fosse uguale: 1 = tutto in una voce, più è alto meglio.")
+        if max_weight:
+            big_k, big_v = max(known.items(), key=lambda kv: kv[1])
+            if big_v > max_weight:
+                st.warning(f"⚠️ **{big_k}** pesa il **{big_v:.1f}%** dell'azionario (soglia {max_weight:.0f}%).")
+    if pct.get(NC, 0) > 5:
+        st.warning(f"{pct[NC]:.1f}% del patrimonio è \"non classificato\": completa i dati dalla matita ✏️ di ogni titolo.")
+
+    if bench:
+        bt = sum(bench.values())
+        bpct = {k: v / bt * 100 for k, v in bench.items()}
+        cats = sorted(set(pct) | set(bpct), key=lambda k: -pct.get(k, 0))
+        fig2 = go.Figure()
+        fig2.add_trace(go.Bar(y=cats, x=[pct.get(k, 0) for k in cats], name="Tu", orientation="h", marker_color="#1f6feb"))
+        fig2.add_trace(go.Bar(y=cats, x=[bpct.get(k, 0) for k in cats], name="MSCI World", orientation="h", marker_color=GREY))
+        fig2.update_layout(
+            barmode="group", template="plotly_dark", paper_bgcolor="#161b22", plot_bgcolor="#161b22",
+            yaxis=dict(autorange="reversed"), xaxis_title="% dell'azionario",
+            height=max(300, 55 * len(cats)), margin=dict(t=30, b=10, l=10, r=10),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        st.plotly_chart(fig2, **STRETCH)
+        diffs = [(pct.get(k, 0) - bpct.get(k, 0), k) for k in cats if k not in (NC, NA)]
+        over = [f"{k} {d:+.0f} pt" for d, k in sorted(diffs, reverse=True) if d >= 5]
+        under = [f"{k} {d:+.0f} pt" for d, k in sorted(diffs) if d <= -5]
+        if over:
+            st.info("📈 Sovrappeso rispetto al benchmark: " + ", ".join(over))
+        if under:
+            st.info("📉 Sottopeso rispetto al benchmark: " + ", ".join(under))
+        st.caption("Benchmark: MSCI World (valori approssimativi). Non è un obiettivo: è solo un punto di riferimento.")
 
 
 # ----------------------------------------------------------------------------
@@ -423,7 +552,7 @@ with tab_portafoglio:
     with st.expander("➕ Aggiungi posizione"):
         with st.form("add_position_form", clear_on_submit=True):
             ca, cb = st.columns(2)
-            new_ticker = ca.text_input("Ticker (Yahoo) / codice")
+            new_ticker = ca.text_input("Ticker (Yahoo) / codice", help="Per la liquidità scrivi CASH e usa la quantità come importo in €.")
             new_name = cb.text_input("Nome")
             new_qty = ca.number_input("Quantità / Lotti", min_value=0.0, value=1.0, step=1.0)
             new_price = cb.number_input("Prezzo manuale (€ o %; 0 = Yahoo)", min_value=0.0, value=0.0, step=0.01)
@@ -440,14 +569,16 @@ with tab_portafoglio:
                 elif t in portfolio:
                     st.error(f"{t} è già presente: modificalo con la matita.")
                 else:
-                    name = new_name.strip() or t
+                    is_cash = t == "CASH"
+                    name = new_name.strip() or ("Liquidità" if is_cash else t)
                     portfolio[t] = {
-                        "qty": new_qty, "name": name, "is_bond": new_is_bond,
-                        "manual_price": new_price, "avg_cost": new_cost,
-                        "force_manual": new_is_bond,
+                        "qty": new_qty, "name": name, "is_bond": new_is_bond and not is_cash,
+                        "manual_price": 1.0 if is_cash else new_price, "avg_cost": 0.0 if is_cash else new_cost,
+                        "force_manual": new_is_bond or is_cash,
                         "coupon": new_coupon or None, "maturity_year": int(new_mat) or None,
-                        "asset_class": guess_class(t, name, new_is_bond) if new_cls == "Auto" else new_cls,
+                        "asset_class": CASH if is_cash else (guess_class(t, name, new_is_bond) if new_cls == "Auto" else new_cls),
                     }
+                    normalize_portfolio({t: portfolio[t]})  # regioni/settori di default
                     save_json(PORTFOLIO_FILE, portfolio)
                     st.rerun()
 
@@ -460,7 +591,9 @@ with tab_portafoglio:
         st.session_state.setdefault(key_edit, False)
 
         csym = CCY_SYMBOL.get(it["ccy"], it["ccy"])
-        if it["price"] is None:
+        if it["asset_class"] == CASH:
+            p_disp = "liquidità"
+        elif it["price"] is None:
             p_disp = "n/d"
         elif it["is_bond"]:
             p_disp = f"{it['price']:.2f}%"
@@ -502,7 +635,7 @@ with tab_portafoglio:
         if st.session_state[key_edit]:
             d = portfolio[sym]
             e1, e2 = st.columns(2)
-            up_q = e1.number_input("Quantità / Lotti", value=float(d["qty"]), step=1.0, key=f"q_{sym}")
+            up_q = e1.number_input("Importo (€)" if sym.upper() == "CASH" else "Quantità / Lotti", value=float(d["qty"]), step=1.0, key=f"q_{sym}")
             up_p = e2.number_input("Prezzo manuale (€ o %)", min_value=0.0, value=float(d["manual_price"]), step=0.01, key=f"p_{sym}")
             e3, e4 = st.columns(2)
             up_cost = e3.number_input("Prezzo medio carico (0 = n/d)", min_value=0.0, value=float(d["avg_cost"]), step=0.01, key=f"c_{sym}")
@@ -513,12 +646,25 @@ with tab_portafoglio:
                 b1, b2 = st.columns(2)
                 up_coupon = b1.number_input("Cedola %", min_value=0.0, value=float(d.get("coupon") or 0.0), step=0.05, key=f"cp_{sym}") or None
                 up_mat = int(b2.number_input("Anno scadenza", min_value=0, max_value=2100, value=int(d.get("maturity_year") or 0), step=1, key=f"mt_{sym}")) or None
+            with st.expander("🌍 Regioni e settori (% del titolo)"):
+                st.caption("Valori da verificare sulla scheda del fornitore. Vengono normalizzati a 100%.")
+                col_cfg = {"%": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=0.5)}
+                reg_df = pd.DataFrame({"Regione": REGIONS, "%": [float(d["regions"].get(r, 0.0)) for r in REGIONS]})
+                up_reg = st.data_editor(reg_df, hide_index=True, disabled=["Regione"], column_config=col_cfg, key=f"reg_{sym}", **STRETCH)
+                st.caption(f"Somma regioni: {up_reg['%'].sum():.1f}%")
+                up_sec = None
+                if d["asset_class"].startswith("Azionario"):
+                    sec_df = pd.DataFrame({"Settore": SECTORS, "%": [float(d["sectors"].get(x, 0.0)) for x in SECTORS]})
+                    up_sec = st.data_editor(sec_df, hide_index=True, disabled=["Settore"], column_config=col_cfg, key=f"sec_{sym}", **STRETCH)
+                    st.caption(f"Somma settori: {up_sec['%'].sum():.1f}%")
             s1, s2 = st.columns(2)
             if s1.button("💾 Salva", key=f"save_{sym}", **STRETCH):
                 d.update({
                     "qty": up_q, "manual_price": up_p, "avg_cost": up_cost,
                     "asset_class": up_cls, "force_manual": up_force,
                     "coupon": up_coupon, "maturity_year": up_mat,
+                    "regions": df_to_exposure(up_reg, "Regione"),
+                    "sectors": df_to_exposure(up_sec, "Settore") if up_sec is not None else d["sectors"],
                 })
                 save_json(PORTFOLIO_FILE, portfolio)
                 st.session_state[key_edit] = False
@@ -690,8 +836,33 @@ with tab_analisi:
         st.plotly_chart(pie("asset_class", grouped, px.colors.qualitative.Safe), **STRETCH)
 
         st.markdown("---")
+        st.subheader("🗺️ Aree geografiche")
+        scope = st.radio("Perimetro", ["Solo azionario", "Tutto il patrimonio"], horizontal=True, key="geo_scope")
+        only_eq = scope == "Solo azionario"
+        reg_data = aggregate_exposure(items, portfolio, "regions", only_eq)
+        render_exposure("Regione", reg_data, EXPOSURE_DB["SWDA"]["regions"] if only_eq else None, px.colors.qualitative.Vivid)
+
+        us_heavy = [
+            it["ticker"] for it in items
+            if it["valore"] > 0 and it["asset_class"].startswith("Azionario")
+            and portfolio[it["ticker"]]["regions"].get("USA", 0) >= 50
+        ]
+        if len(us_heavy) >= 3:
+            st.info(
+                f"🔁 **Sovrapposizione:** {len(us_heavy)} titoli ({', '.join(us_heavy)}) hanno oltre il 50% in USA."
+                " Le stesse grandi società compaiono in più fondi, quindi il numero di ETF sovrastima la diversificazione reale."
+            )
+
+        st.markdown("---")
+        st.subheader("🏭 Settori (solo azionario)")
+        sec_data = aggregate_exposure(items, portfolio, "sectors", True)
+        render_exposure("Settore", sec_data, EXPOSURE_DB["SWDA"]["sectors"], px.colors.qualitative.Prism, max_weight=SECTOR_WARN)
+        st.caption("Regioni e settori sono valori approssimativi dei fondi: verificali sulle schede dei fornitori e modificali dalla matita ✏️ di ogni titolo.")
+
+        st.markdown("---")
         st.subheader("⚖️ Bilanciamento")
-        top = df.loc[df["valore"].idxmax()]
+        df_inv = df[df["asset_class"] != CASH]
+        top = df_inv.loc[df_inv["valore"].idxmax()] if len(df_inv) else df.loc[df["valore"].idxmax()]
         top_pct = top["valore"] / total_net_worth * 100
         if top_pct > 35:
             st.warning(f"⚠️ **{top['ticker']}** pesa il **{top_pct:.1f}%** del portafoglio: concentrazione sopra la soglia del 35%.")
@@ -701,9 +872,10 @@ with tab_analisi:
         eq = grouped[grouped["asset_class"].str.startswith("Azionario")]["valore"].sum()
         bd = grouped[grouped["asset_class"] == BOND]["valore"].sum()
         cm = grouped[grouped["asset_class"] == "Materie Prime (Oro)"]["valore"].sum()
+        lq = grouped[grouped["asset_class"] == CASH]["valore"].sum()
         st.info(
             f"💡 Azionario ~{eq / total_net_worth * 100:.1f}% | Obbligazionario"
-            f" ~{bd / total_net_worth * 100:.1f}% | Materie prime ~{cm / total_net_worth * 100:.1f}%"
+            f" ~{bd / total_net_worth * 100:.1f}% | Materie prime ~{cm / total_net_worth * 100:.1f}% | Liquidità ~{lq / total_net_worth * 100:.1f}%"
         )
     else:
         st.info("Aggiungi almeno una posizione con un prezzo valido per vedere l'analisi.")
