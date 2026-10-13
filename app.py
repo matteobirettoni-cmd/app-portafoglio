@@ -1,6 +1,11 @@
+import html
 import json
 import os
 import re
+import shutil
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -8,931 +13,757 @@ import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
 
-# Configurazione pagina
-st.set_page_config(
-    page_title="Il Mio Portafoglio", page_icon="📈", layout="wide"
+st.set_page_config(page_title="Il Mio Portafoglio", page_icon="📈", layout="wide")
+
+# Compatibilità: width="stretch" dalla 1.50, use_container_width prima
+STRETCH = (
+    {"width": "stretch"}
+    if tuple(int(x) for x in re.findall(r"\d+", st.__version__)[:2]) >= (1, 50)
+    else {"use_container_width": True}
 )
 
-# Stile CSS personalizzato per ottimizzazione mobile estrema
 st.markdown(
     """
     <style>
     .stApp { background-color: #0e1117; color: #ffffff; }
     .market-card-pos { background-color: #113822; padding: 12px; border-radius: 8px; border-left: 4px solid #238636; margin-bottom: 8px; }
     .market-card-neg { background-color: #3b171c; padding: 12px; border-radius: 8px; border-left: 4px solid #da3633; margin-bottom: 8px; }
-    
-    /* Stile per i mini-pulsanti d'azione */
     div.stButton > button {
-        padding: 2px 5px !important;
-        font-size: 11px !important;
-        min-height: 24px !important;
-        max-height: 28px !important;
-        line-height: 1 !important;
-        border-radius: 4px !important;
+        padding: 2px 5px !important; font-size: 11px !important;
+        min-height: 24px !important; max-height: 28px !important;
+        line-height: 1 !important; border-radius: 4px !important;
     }
     </style>
-""",
+    """,
     unsafe_allow_html=True,
 )
 
-# Gestione persistenza dati su file JSON locale
+# ----------------------------------------------------------------------------
+# COSTANTI E IPOTESI (modificabili)
+# ----------------------------------------------------------------------------
 PORTFOLIO_FILE = "portfolio.json"
+WATCHLIST_FILE = "watchlists.json"
+
+BOND = "Obbligazioni / BTP"
+ASSET_CLASSES = [
+    "Azionario Globale",
+    "Azionario USA",
+    "Azionario Emergenti",
+    "Azionario Italia/Altro",
+    "Materie Prime (Oro)",
+    BOND,
+]
+# (rendimento atteso annuo, volatilità annua). Sono IPOTESI, non previsioni.
+# Per le obbligazioni il rendimento viene calcolato da cedola/prezzo/scadenza.
+# Un BTP 2067 ha duration molto alta, quindi volatilità ben sopra il 6%.
+ASSUMPTIONS = {
+    "Azionario Globale": (0.07, 0.16),
+    "Azionario USA": (0.075, 0.17),
+    "Azionario Emergenti": (0.08, 0.20),
+    "Azionario Italia/Altro": (0.07, 0.20),
+    "Materie Prime (Oro)": (0.04, 0.15),
+    BOND: (None, 0.12),
+}
+BOND_TAX = 0.125  # tassazione agevolata titoli di Stato
+CCY_SYMBOL = {"EUR": "€", "USD": "$", "GBP": "£", "GBp": "p"}
+GREEN, RED, GREY = "#3fb950", "#f85149", "#8b9499"
 
 
-def load_portfolio():
-  if os.path.exists(PORTFOLIO_FILE):
+# ----------------------------------------------------------------------------
+# UTILITY
+# ----------------------------------------------------------------------------
+def esc(x):
+    return html.escape(str(x))
+
+
+def eur(x, decimals=0):
+    s = f"{x:,.{decimals}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"{s} €"
+
+
+def guess_class(sym, name, is_bond):
+    s = f"{sym} {name}".upper()
+    if is_bond or "BTP" in s or "BOND" in s:
+        return BOND
+    if "GOLD" in s or "ORO" in s:
+        return "Materie Prime (Oro)"
+    if any(k in s for k in ("EMERGING", "XMME")):
+        return "Azionario Emergenti"
+    if any(k in s for k in ("NASDAQ", "NDX", "RUSSELL", "S&P", "MSCI USA", "XUSE", "SP500")):
+        return "Azionario USA"
+    if any(k in s for k in ("WORLD", "SWDA", "XACT", "XWLD", "ACWI")):
+        return "Azionario Globale"
+    return "Azionario Italia/Altro"
+
+
+# ----------------------------------------------------------------------------
+# PERSISTENZA
+# ----------------------------------------------------------------------------
+def load_json(path, default):
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f), None
+        except Exception as e:
+            try:
+                shutil.copy(path, path + ".bak")
+            except Exception:
+                pass
+            return default, (
+                f"Il file {path} non era leggibile ({e}). Ne ho salvato una copia"
+                f" in {path}.bak; sto usando i dati di default."
+            )
+    return default, None
+
+
+def save_json(path, data):
+    tmp = path + ".tmp"
     try:
-      with open(PORTFOLIO_FILE, "r") as f:
-        return json.load(f)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, path)
+    except Exception as e:
+        st.warning(f"Salvataggio non riuscito: {e}")
+
+
+def default_portfolio():
+    def p(qty, name, price, is_bond=False):
+        return {"qty": qty, "name": name, "is_bond": is_bond, "manual_price": price}
+
+    return {
+        "ISP.MI": p(250.0, "Intesa Sanpaolo", 6.116),
+        "GOLD": p(10.0, "Amundi Physical Gold ETC", 148.21),
+        "SWDA.MI": p(87.0, "iShares Core MSCI World UCITS ETF", 131.67),
+        "XMME.MI": p(15.0, "Xtrackers MSCI Emerging Markets", 82.998),
+        "XNDX.MI": p(10.0, "Xtrackers NASDAQ 100", 63.88),
+        "XACT.MI": p(101.0, "Xtrackers FTSE All-World", 9.644),
+        "XUSE.MI": p(16.0, "Xtrackers MSCI USA", 206.2),
+        "XWLD.MI": p(21.0, "Xtrackers MSCI World Value", 74.09),
+        "XR2K.MI": p(1.0, "Xtrackers Russell 2000", 371.82),
+        "BTP-2067": p(14.0, "BTP Tf 2.8% Mz67", 63.85, True),
+    }
+
+
+def normalize_portfolio(port):
+    """Aggiunge i campi nuovi ai dati vecchi senza perdere nulla."""
+    for sym, d in port.items():
+        d.setdefault("name", sym)
+        d.setdefault("qty", 0.0)
+        d.setdefault("is_bond", False)
+        d.setdefault("manual_price", 0.0)
+        d.setdefault("avg_cost", 0.0)  # prezzo medio di carico (PMC)
+        d.setdefault("force_manual", bool(d["is_bond"]))
+        d.setdefault("coupon", None)
+        d.setdefault("maturity_year", None)
+        if d.get("asset_class") not in ASSET_CLASSES:
+            d["asset_class"] = guess_class(sym, d["name"], d["is_bond"])
+    return port
+
+
+# ----------------------------------------------------------------------------
+# DATI DA YAHOO FINANCE (chiamate in parallelo, cache 5 minuti)
+# ----------------------------------------------------------------------------
+def _fetch_one(sym):
+    try:
+        t = yf.Ticker(sym)
+        closes = t.history(period="5d")["Close"].dropna()
+        if len(closes) == 0:
+            return sym, None
+        cur = float(closes.iloc[-1])
+        prev = float(closes.iloc[-2]) if len(closes) > 1 else cur
+        chg = (cur - prev) / prev * 100 if prev else 0.0
+        try:
+            ccy = t.fast_info.get("currency")
+        except Exception:
+            ccy = None
+        return sym, {"price": cur, "change": chg, "currency": ccy}
     except Exception:
-      pass
-  return {
-      "ISP.MI": {
-          "qty": 250.0,
-          "name": "Intesa Sanpaolo",
-          "is_bond": False,
-          "manual_price": 6.116,
-      },
-      "GOLD": {
-          "qty": 10.0,
-          "name": "Amundi Physical Gold ETC",
-          "is_bond": False,
-          "manual_price": 148.21,
-      },
-      "SWDA.MI": {
-          "qty": 87.0,
-          "name": "iShares Core MSCI World UCITS ETF",
-          "is_bond": False,
-          "manual_price": 131.67,
-      },
-      "XMME.MI": {
-          "qty": 15.0,
-          "name": "Xtrackers MSCI Emerging Markets",
-          "is_bond": False,
-          "manual_price": 82.998,
-      },
-      "XNDX.MI": {
-          "qty": 10.0,
-          "name": "Xtrackers NASDAQ 100",
-          "is_bond": False,
-          "manual_price": 63.88,
-      },
-      "XACT.MI": {
-          "qty": 101.0,
-          "name": "Xtrackers FTSE All-World",
-          "is_bond": False,
-          "manual_price": 9.644,
-      },
-      "XUSE.MI": {
-          "qty": 16.0,
-          "name": "Xtrackers MSCI USA",
-          "is_bond": False,
-          "manual_price": 206.2,
-      },
-      "XWLD.MI": {
-          "qty": 21.0,
-          "name": "Xtrackers MSCI World Value",
-          "is_bond": False,
-          "manual_price": 74.09,
-      },
-      "XR2K.MI": {
-          "qty": 1.0,
-          "name": "Xtrackers Russell 2000",
-          "is_bond": False,
-          "manual_price": 371.82,
-      },
-      "BTP-2067": {
-          "qty": 14.0,
-          "name": "BTP Tf 2.8% Mz67",
-          "is_bond": True,
-          "manual_price": 63.85,
-      },
-  }
+        return sym, None
 
 
-def save_portfolio(port):
-  try:
-    with open(PORTFOLIO_FILE, "w") as f:
-      json.dump(port, f)
-  except Exception:
-    pass
+@st.cache_data(ttl=300, show_spinner="Scarico i prezzi da Yahoo Finance...")
+def fetch_quotes(symbols):
+    syms = sorted({s.upper().strip() for s in symbols if s})
+    if not syms:
+        return {}, datetime.now().strftime("%d/%m/%Y %H:%M")
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        res = dict(ex.map(_fetch_one, syms))
+    return res, datetime.now().strftime("%d/%m/%Y %H:%M")
 
 
-# Sidebar globale con pulsante di aggiornamento
-with st.sidebar:
-  st.markdown("### ⚙️ Pannello di Controllo")
-  st.write(
-      "Usa il pulsante sottostante per svuotare la cache e forzare lo scaricamento"
-      " dei prezzi freschi da Yahoo Finance."
-  )
-  if st.button("🔄 Aggiorna da Yahoo Finance", type="primary"):
-    st.cache_data.clear()
-    st.success("Dati aggiornati con successo!")
-    st.rerun()
-  st.divider()
-  st.info(
-      "💡 Clicca sulla matita ✏️ a fianco di ogni titolo per aprirne la gestione"
-      " e le opzioni."
-  )
+def fx_factor(ccy, quotes):
+    """Moltiplicatore per convertire un prezzo nella valuta `ccy` in euro."""
+    if not ccy or ccy == "EUR":
+        return 1.0
+    pairs = {"USD": ("EURUSD=X", 1.0), "GBP": ("EURGBP=X", 1.0), "GBp": ("EURGBP=X", 100.0)}
+    if ccy not in pairs:
+        return None
+    pair, div = pairs[ccy]
+    q = quotes.get(pair)
+    if not q or not q["price"]:
+        return None
+    return 1.0 / (q["price"] * div)
 
 
-# Funzione dati da yfinance
-@st.cache_data(ttl=300)
-def get_ticker_data(ticker_symbol):
-  clean_sym = ticker_symbol.upper().strip()
-  try:
-    t = yf.Ticker(clean_sym)
-    hist = t.history(period="5d")
-    if not hist.empty and "Close" in hist.columns:
-      current_price = float(hist["Close"].iloc[-1])
-      prev_price = (
-          float(hist["Close"].iloc[-2]) if len(hist) > 1 else current_price
-      )
-      change = float(((current_price - prev_price) / prev_price) * 100)
-      if not np.isnan(current_price):
-        return current_price, change
+def build_positions(portfolio):
+    fx_syms = ("EURUSD=X", "EURGBP=X")
+    to_fetch = tuple(s for s, d in portfolio.items() if not d["force_manual"]) + fx_syms
+    quotes, ts = fetch_quotes(to_fetch)
+    items, warns = [], []
 
-    price = t.fast_info.get("lastPrice", None)
-    if price is not None and not np.isnan(price):
-      return float(price), 0.0
-  except Exception:
-    pass
+    for sym, d in portfolio.items():
+        q = None if d["force_manual"] else quotes.get(sym.upper())
+        price, change, source, ccy, fx = None, None, "n/d", "EUR", 1.0
 
-  return 100.0, 0.0
+        if q:
+            price, change, source = q["price"], q["change"], "Yahoo"
+            ccy = q.get("currency") or "EUR"
+            f = fx_factor(ccy, quotes)
+            if f is None:
+                warns.append(f"{sym}: valuta {ccy} non convertibile, valore non affidabile.")
+                f = 1.0
+            fx = f
+        elif d["manual_price"] > 0:
+            price, change, source = d["manual_price"], None, "manuale"
+            if not d["force_manual"]:
+                warns.append(f"{sym}: Yahoo non risponde, uso il prezzo manuale.")
+        else:
+            warns.append(f"{sym}: prezzo non disponibile (valore escluso dal totale).")
+
+        if price is None:
+            valore = 0.0
+        elif d["is_bond"]:
+            valore = d["qty"] * 1000.0 * price / 100.0
+        else:
+            valore = d["qty"] * price * fx
+
+        cost = 0.0
+        if d["avg_cost"] > 0:
+            cost = d["qty"] * 1000.0 * d["avg_cost"] / 100.0 if d["is_bond"] else d["qty"] * d["avg_cost"]
+        pnl = (valore - cost) if (cost > 0 and price is not None) else None
+
+        items.append({
+            "ticker": sym, "name": d["name"], "qty": d["qty"], "price": price,
+            "change": change, "valore": valore, "is_bond": d["is_bond"],
+            "source": source, "ccy": ccy, "cost": cost, "pnl": pnl,
+            "asset_class": d["asset_class"],
+        })
+    return items, warns, ts
 
 
-# Inizializzazione Sessione con caricamento persistente
+# ----------------------------------------------------------------------------
+# MODELLI: PAC (Monte Carlo log-normale) e FIRE
+# ----------------------------------------------------------------------------
+def bond_net_return(sym, d, price_pct):
+    """Rendimento netto approssimato a scadenza (cedola + pull-to-par)."""
+    coupon = d.get("coupon")
+    if not coupon:
+        m = re.search(r"(\d+[.,]?\d*)\s*%", d.get("name", ""))
+        coupon = float(m.group(1).replace(",", ".")) if m else None
+    year = d.get("maturity_year")
+    if not year:
+        m = re.search(r"(20\d{2})", sym) or re.search(r"[A-Za-z]{2}(\d{2})\b", d.get("name", ""))
+        if m:
+            y = int(m.group(1))
+            year = y if y > 100 else 2000 + y
+    if coupon is None:
+        return 0.03
+    price = price_pct if price_pct and price_pct > 0 else 100.0
+    n = max(int(year) - datetime.now().year, 1) if year else None
+    gross = (coupon + (100.0 - price) / n) / ((100.0 + price) / 2.0) if n else coupon / price
+    return max(gross * (1 - BOND_TAX), 0.0)
+
+
+def portfolio_stats(weights, items_by_sym, portfolio, rho):
+    """Rendimento e volatilità del portafoglio con correlazione media rho."""
+    mu = a = b = 0.0
+    for sym, w in weights.items():
+        d = portfolio[sym]
+        r, v = ASSUMPTIONS[d["asset_class"]]
+        if r is None:
+            r = bond_net_return(sym, d, items_by_sym[sym]["price"])
+        mu += w * r
+        a += w * v
+        b += (w * v) ** 2
+    var = (1 - rho) * b + rho * a ** 2
+    return mu, float(np.sqrt(var))
+
+
+def run_monte_carlo(start, contrib, mu, sigma, years, n=3000, seed=42):
+    months = int(years * 12)
+    rng = np.random.default_rng(seed)
+    z = rng.standard_normal((months, n))
+    factors = np.exp((mu - 0.5 * sigma ** 2) / 12 + sigma / np.sqrt(12) * z)
+    paths = np.empty((months + 1, n))
+    paths[0] = start
+    for m in range(1, months + 1):
+        paths[m] = (paths[m - 1] + contrib) * factors[m - 1]
+    return paths
+
+
+# ----------------------------------------------------------------------------
+# STATO SESSIONE
+# ----------------------------------------------------------------------------
 if "portfolio" not in st.session_state:
-  st.session_state.portfolio = load_portfolio()
-
+    port, warn = load_json(PORTFOLIO_FILE, default_portfolio())
+    st.session_state.portfolio = normalize_portfolio(port)
+    st.session_state.load_warning = warn
 if "watchlists" not in st.session_state:
-  st.session_state.watchlists = {
-      "Da seguire": ["SWDA.MI", "ISP.MI", "BTP-2067", "AAPL"]
-  }
+    wl, warn = load_json(WATCHLIST_FILE, {"Da seguire": ["SWDA.MI", "ISP.MI", "AAPL"]})
+    st.session_state.watchlists = wl
+    st.session_state.wl_warning = warn
 
-if "show_pac" not in st.session_state:
-  st.session_state.show_pac = False
+portfolio = st.session_state.portfolio
 
-if "show_fire" not in st.session_state:
-  st.session_state.show_fire = False
-
-if "show_add_form" not in st.session_state:
-  st.session_state.show_add_form = False
-
-if "pac_excluded" not in st.session_state:
-  st.session_state.pac_excluded = []
+# ----------------------------------------------------------------------------
+# SIDEBAR
+# ----------------------------------------------------------------------------
+with st.sidebar:
+    st.markdown("### ⚙️ Pannello di Controllo")
+    st.write("Svuota la cache e scarica prezzi freschi da Yahoo Finance.")
+    if st.button("🔄 Aggiorna da Yahoo Finance", type="primary"):
+        st.cache_data.clear()
+        st.rerun()
+    ts_box = st.empty()
+    st.divider()
+    st.info("💡 Clicca sulla matita ✏️ accanto a ogni titolo per modificarlo.")
+    st.caption(
+        "Su Streamlit Cloud i file JSON si cancellano a ogni riavvio: per"
+        " pubblicare l'app serve un database esterno."
+    )
 
 tab_mercati, tab_portafoglio, tab_analisi, tab_watchlist = st.tabs(
     ["Mercati", "Portafoglio", "Analisi", "Watchlist"]
 )
 
+# ----------------------------------------------------------------------------
+# 1. MERCATI
+# ----------------------------------------------------------------------------
 market_symbols = {
-    "FTSE MIB": "^FTSEMIB",
-    "Euro Stoxx 50": "^STOXX50E",
-    "DAX": "^GDAXI",
-    "S&P 500": "^GSPC",
-    "Nasdaq 100": "^NDX",
-    "Oro (USD/oz)": "GC=F",
+    "FTSE MIB": "^FTSEMIB", "Euro Stoxx 50": "^STOXX50E", "DAX": "^GDAXI",
+    "S&P 500": "^GSPC", "Nasdaq 100": "^NDX", "Oro (USD/oz)": "GC=F",
     "Petrolio Brent": "BZ=F",
 }
 
-# 1. TAB MERCATI
 with tab_mercati:
-  pos_count = 0
-  tot_count = 0
-  evaluated_markets = []
+    mq, _ = fetch_quotes(tuple(market_symbols.values()))
+    evaluated = [(n, mq[s.upper()]) for n, s in market_symbols.items() if mq.get(s.upper())]
+    missing = [n for n, s in market_symbols.items() if not mq.get(s.upper())]
 
-  for name, sym in market_symbols.items():
-    p, c = get_ticker_data(sym)
-    if c is not None:
-      tot_count += 1
-      if c >= 0:
-        pos_count += 1
-      evaluated_markets.append((name, p, c))
-
-  is_market_bullish = (
-      pos_count >= (tot_count / 2) if tot_count > 0 else True
-  )
-  header_bg = (
-      "linear-gradient(135deg, #238636, #113822)"
-      if is_market_bullish
-      else "linear-gradient(135deg, #da3633, #3b171c)"
-  )
-
-  st.markdown(
-      f"""
-        <div style="background: {header_bg}; padding: 20px; border-radius: 10px; margin-bottom: 15px;">
-            <h1 style="color: white; margin: 0; font-size: 24px;">Mercati</h1>
-            <p style="color: #c9d1d9; margin: 5px 0 0 0; font-size: 13px;">Panoramica in tempo reale</p>
-        </div>
-    """,
-      unsafe_allow_html=True,
-  )
-
-  col1, col2 = st.columns(2)
-  i = 0
-  for name, price, change in evaluated_markets:
-    is_pos = change >= 0
-    card_class = "market-card-pos" if is_pos else "market-card-neg"
-    sign = "+" if is_pos else ""
-    color = "#3fb950" if is_pos else "#f85149"
-
-    with col1 if i % 2 == 0 else col2:
-      st.markdown(
-          f"""
-            <div class="{card_class}">
-                <h4 style="margin:0; color: white; font-size: 14px;">{name}</h4>
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
-                    <span style="font-size: 16px; font-weight: bold; color: white;">{price:,.2f}</span>
-                    <span style="font-size: 13px; font-weight: bold; color: {color};">{sign}{change:.2f}%</span>
-                </div>
-            </div>
-        """,
-          unsafe_allow_html=True,
-      )
-    i += 1
-
-# 2. TAB PORTAFOGLIO
-with tab_portafoglio:
-  total_net_worth = 0
-  total_daily_change_eur = 0
-  portfolio_items = []
-
-  for sym, data in st.session_state.portfolio.items():
-    manual_p = data.get("manual_price", 0.0)
-    if manual_p > 0:
-      price = manual_p
-      change = 0.0
-    else:
-      price, change = get_ticker_data(sym)
-      if price is None or np.isnan(price):
-        price = 100.0
-
-    is_bond = data.get("is_bond", False)
-    if is_bond:
-      nominale = data["qty"] * 1000.0
-      valore = nominale * (price / 100.0)
-    else:
-      valore = data["qty"] * price
-
-    total_net_worth += valore
-    item_daily_eur = valore * (change / 100.0)
-    total_daily_change_eur += item_daily_eur
-
-    portfolio_items.append({
-        "ticker": sym,
-        "name": data["name"],
-        "qty": data["qty"],
-        "price": price,
-        "change": change,
-        "valore": valore,
-        "is_bond": is_bond,
-        "manual_price": manual_p,
-    })
-
-  prev_net_worth = total_net_worth - total_daily_change_eur
-  portfolio_daily_pct = (
-      (total_daily_change_eur / prev_net_worth) * 100
-      if prev_net_worth > 0
-      else 0.0
-  )
-
-  chg_sign = "+" if total_daily_change_eur >= 0 else ""
-  chg_color = "#3fb950" if total_daily_change_eur >= 0 else "#f85149"
-
-  st.markdown(
-      f"""
-        <div style="background: linear-gradient(135deg, #1f6feb, #113822); padding: 20px; border-radius: 10px; margin-bottom: 15px;">
-            <h3 style="color: #8b94e0; margin: 0; font-size: 14px;">Patrimonio netto</h3>
-            <h1 style="color: white; margin: 4px 0; font-size: 32px;">{total_net_worth:,.2f} €</h1>
-            <p style="color: {chg_color}; margin: 0; font-size: 14px; font-weight: bold;">
-                Oggi: {chg_sign}{total_daily_change_eur:,.2f} € ({chg_sign}{portfolio_daily_pct:.2f}%)
-            </p>
-        </div>
-    """,
-      unsafe_allow_html=True,
-  )
-
-  # Pulsante a scomparsa per aggiungere una nuova posizione
-  btn_label = (
-      "❌ Chiudi Modulo Aggiunta"
-      if st.session_state.show_add_form
-      else "➕ Aggiungi Posizione"
-  )
-  if st.button(btn_label, type="primary", use_container_width=True):
-    st.session_state.show_add_form = not st.session_state.show_add_form
-    st.rerun()
-
-  if st.session_state.show_add_form:
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.subheader("Nuova Posizione")
-    with st.form("add_position_form"):
-      col_a, col_b = st.columns(2)
-      with col_a:
-        new_ticker = st.text_input("Ticker / ISIN")
-        new_qty = st.number_input(
-            "Quantità / Lotti", min_value=0.0, value=1.0, step=1.0
-        )
-      with col_b:
-        new_name = st.text_input("Nome")
-        new_manual_price = st.number_input(
-            "Prezzo Man. (€ o % - 0=Auto)",
-            min_value=0.0,
-            value=0.0,
-            step=0.01,
-        )
-
-      new_is_bond = st.checkbox("Obbligazione/BTP?")
-      submitted = st.form_submit_button("Conferma e Salva Posizione")
-      if submitted and new_ticker:
-        st.session_state.portfolio[new_ticker.upper()] = {
-            "qty": new_qty,
-            "name": new_name or new_ticker,
-            "is_bond": new_is_bond,
-            "manual_price": new_manual_price,
-        }
-        save_portfolio(st.session_state.portfolio)
-        st.session_state.show_add_form = False
-        st.rerun()
-
-  st.markdown(
-      "<hr style='margin: 12px 0; border-color: #30363d;'>",
-      unsafe_allow_html=True,
-  )
-  st.subheader("Posizioni")
-
-  for item in portfolio_items:
-    sym = item["ticker"]
-    chg = item["change"]
-    c_sign = "+" if chg >= 0 else ""
-    c_col = "#3fb950" if chg >= 0 else "#f85149"
-    badge = " (BTP)" if item["is_bond"] else ""
-    p_display = (
-        f"{item['price']:.2f}%" if item["is_bond"] else f"{item['price']:,.2f} €"
+    pos = sum(1 for _, q in evaluated if q["change"] >= 0)
+    bullish = pos >= len(evaluated) / 2 if evaluated else True
+    header_bg = (
+        "linear-gradient(135deg, #238636, #113822)" if bullish
+        else "linear-gradient(135deg, #da3633, #3b171c)"
     )
-
-    edit_key = f"edit_active_{sym}"
-    if edit_key not in st.session_state:
-      st.session_state[edit_key] = False
-
-    cols = st.columns([4.8, 1.5, 0.7], gap="small")
-    with cols[0]:
-      st.markdown(
-          f"""
-            <div style="font-size: 13px; line-height: 1.3;">
-                <b>{sym}{badge}</b> <span style="color: #8b9499; font-size: 11px; margin-left: 4px;">{p_display}</span><br>
-                <span style="font-size: 11px; color: #c9d1d9;">Qt: {item['qty']} | Tot: <b>{item['valore']:,.0f} €</b></span>
-            </div>
-            """,
-          unsafe_allow_html=True,
-      )
-    with cols[1]:
-      st.markdown(
-          f"""
-            <div style="text-align: center; font-size: 16px; font-weight: bold; color: {c_col}; padding-top: 4px;">
-                {c_sign}{chg:.2f}%
-            </div>
-            """,
-          unsafe_allow_html=True,
-      )
-    with cols[2]:
-      if st.button("✏️", key=f"btn_edit_{sym}", help="Gestisci / Modifica"):
-        st.session_state[edit_key] = not st.session_state[edit_key]
-        st.rerun()
-
-    if st.session_state[edit_key]:
-      with st.container():
-        st.markdown(
-            f"<div style='background-color: #161b22; padding: 10px; border-radius: 6px; border: 1px solid #30363d; margin: 4px 0;'>"
-            f"<span style='font-size:12px; color:#8b94e0; font-weight:bold;'>Gestione {sym}</span>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-        ec1, ec2 = st.columns(2)
-        with ec1:
-          up_q = st.number_input(
-              "Qt / Lotti",
-              value=float(item["qty"]),
-              key=f"q_{sym}",
-              step=1.0,
-          )
-        with ec2:
-          # Mantiene il vero stato del prezzo manuale (0 = automatico da Yahoo Finance)
-          up_p = st.number_input(
-              "Prezzo Manuale (0 = Auto)",
-              value=float(item["manual_price"]),
-              key=f"p_{sym}",
-              step=0.01,
-          )
-
-        sub_c1, sub_c2 = st.columns(2)
-        with sub_c1:
-          if st.button("💾 Salva", key=f"save_{sym}", use_container_width=True):
-            st.session_state.portfolio[sym]["qty"] = up_q
-            st.session_state.portfolio[sym]["manual_price"] = up_p
-            save_portfolio(st.session_state.portfolio)
-            st.session_state[edit_key] = False
-            st.rerun()
-        with sub_c2:
-          if st.button(
-              "❌ Elimina Titolo", key=f"del_{sym}", use_container_width=True
-          ):
-            del st.session_state.portfolio[sym]
-            save_portfolio(st.session_state.portfolio)
-            st.rerun()
-
     st.markdown(
-        "<hr style='margin: 4px 0; border-color: #21262d;'>",
+        f"""<div style="background: {header_bg}; padding: 20px; border-radius: 10px; margin-bottom: 15px;">
+        <h1 style="color: white; margin: 0; font-size: 24px;">Mercati</h1>
+        <p style="color: #c9d1d9; margin: 5px 0 0 0; font-size: 13px;">Ultima chiusura / prezzo disponibile</p></div>""",
+        unsafe_allow_html=True,
+    )
+    col1, col2 = st.columns(2)
+    for i, (name, q) in enumerate(evaluated):
+        is_pos = q["change"] >= 0
+        cls = "market-card-pos" if is_pos else "market-card-neg"
+        color = GREEN if is_pos else RED
+        sign = "+" if is_pos else ""
+        with (col1 if i % 2 == 0 else col2):
+            st.markdown(
+                f"""<div class="{cls}"><h4 style="margin:0; color: white; font-size: 14px;">{esc(name)}</h4>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
+                <span style="font-size: 16px; font-weight: bold; color: white;">{q['price']:,.2f}</span>
+                <span style="font-size: 13px; font-weight: bold; color: {color};">{sign}{q['change']:.2f}%</span>
+                </div></div>""",
+                unsafe_allow_html=True,
+            )
+    if missing:
+        st.caption(f"Dati non disponibili: {', '.join(missing)}")
+
+# ----------------------------------------------------------------------------
+# 2. PORTAFOGLIO
+# ----------------------------------------------------------------------------
+items, warns, ts = build_positions(portfolio)
+ts_box.caption(f"Ultimo aggiornamento prezzi: {ts}")
+items_by_sym = {it["ticker"]: it for it in items}
+
+total_net_worth = sum(it["valore"] for it in items)
+daily_eur = sum(it["valore"] * (it["change"] or 0.0) / 100.0 for it in items)
+prev_nw = total_net_worth - daily_eur
+daily_pct = daily_eur / prev_nw * 100 if prev_nw > 0 else 0.0
+total_cost = sum(it["cost"] for it in items if it["pnl"] is not None)
+total_pnl = sum(it["pnl"] for it in items if it["pnl"] is not None)
+
+with tab_portafoglio:
+    if st.session_state.get("load_warning"):
+        st.warning(st.session_state.load_warning)
+    if warns:
+        st.warning("\n\n".join(f"⚠️ {w}" for w in warns))
+
+    chg_color = GREEN if daily_eur >= 0 else RED
+    sign = "+" if daily_eur >= 0 else ""
+    pnl_line = ""
+    if total_cost > 0:
+        ps = "+" if total_pnl >= 0 else ""
+        pc = GREEN if total_pnl >= 0 else RED
+        pnl_line = (
+            f'<p style="color:{pc}; margin:2px 0 0 0; font-size:13px;">P&L totale: {ps}{eur(total_pnl)}'
+            f" ({ps}{total_pnl / total_cost * 100:.2f}%)</p>"
+        )
+    st.markdown(
+        f"""<div style="background: linear-gradient(135deg, #1f6feb, #113822); padding: 20px; border-radius: 10px; margin-bottom: 15px;">
+        <h3 style="color: #8b94e0; margin: 0; font-size: 14px;">Patrimonio netto</h3>
+        <h1 style="color: white; margin: 4px 0; font-size: 32px;">{eur(total_net_worth, 2)}</h1>
+        <p style="color: {chg_color}; margin: 0; font-size: 14px; font-weight: bold;">
+        Oggi: {sign}{eur(daily_eur, 2)} ({sign}{daily_pct:.2f}%)</p>{pnl_line}</div>""",
         unsafe_allow_html=True,
     )
 
-  st.divider()
+    # --- Aggiunta posizione ---
+    with st.expander("➕ Aggiungi posizione"):
+        with st.form("add_position_form", clear_on_submit=True):
+            ca, cb = st.columns(2)
+            new_ticker = ca.text_input("Ticker (Yahoo) / codice")
+            new_name = cb.text_input("Nome")
+            new_qty = ca.number_input("Quantità / Lotti", min_value=0.0, value=1.0, step=1.0)
+            new_price = cb.number_input("Prezzo manuale (€ o %; 0 = Yahoo)", min_value=0.0, value=0.0, step=0.01)
+            new_cost = ca.number_input("Prezzo medio di carico (0 = n/d)", min_value=0.0, value=0.0, step=0.01)
+            new_cls = cb.selectbox("Asset class", ["Auto"] + ASSET_CLASSES)
+            new_is_bond = st.checkbox("Obbligazione/BTP? (prezzo in %, lotti da 1.000 €)")
+            cc1, cc2 = st.columns(2)
+            new_coupon = cc1.number_input("Cedola % (solo obbligazioni)", min_value=0.0, value=0.0, step=0.05)
+            new_mat = cc2.number_input("Anno scadenza (solo obbligazioni)", min_value=0, max_value=2100, value=0, step=1)
+            if st.form_submit_button("Conferma e salva"):
+                t = new_ticker.upper().strip()
+                if not t:
+                    st.error("Inserisci un ticker.")
+                elif t in portfolio:
+                    st.error(f"{t} è già presente: modificalo con la matita.")
+                else:
+                    name = new_name.strip() or t
+                    portfolio[t] = {
+                        "qty": new_qty, "name": name, "is_bond": new_is_bond,
+                        "manual_price": new_price, "avg_cost": new_cost,
+                        "force_manual": new_is_bond,
+                        "coupon": new_coupon or None, "maturity_year": int(new_mat) or None,
+                        "asset_class": guess_class(t, name, new_is_bond) if new_cls == "Auto" else new_cls,
+                    }
+                    save_json(PORTFOLIO_FILE, portfolio)
+                    st.rerun()
 
-  # Pulsante per aprire/chiudere il Simulatore PAC
-  if st.button(
-      "📊 Simulazione Rendimento PAC", type="primary", use_container_width=True
-  ):
-    st.session_state.show_pac = not st.session_state.show_pac
-    st.rerun()
+    st.markdown("<hr style='margin: 12px 0; border-color: #30363d;'>", unsafe_allow_html=True)
+    st.subheader("Posizioni")
 
-  if st.session_state.show_pac:
-    st.markdown("### Simulatore Monte Carlo con PAC")
-    col_m1, col_m2, col_m3 = st.columns(3)
-    with col_m1:
-      pac_amount = st.number_input("Importo PAC (€)", value=300)
-    with col_m2:
-      pac_freq = st.selectbox(
-          "Frequenza", ["Mensile", "Settimanale", "Trimestrale"]
-      )
-    with col_m3:
-      years = st.number_input("Anni", min_value=1, max_value=40, value=20)
+    for it in items:
+        sym = it["ticker"]
+        key_edit = f"edit_active_{sym}"
+        st.session_state.setdefault(key_edit, False)
 
-    st.markdown("##### 📊 Ripartizione Asset per il PAC (%)")
+        csym = CCY_SYMBOL.get(it["ccy"], it["ccy"])
+        if it["price"] is None:
+            p_disp = "n/d"
+        elif it["is_bond"]:
+            p_disp = f"{it['price']:.2f}%"
+        else:
+            p_disp = f"{it['price']:,.2f} {csym}"
+        badge = " (BTP)" if it["is_bond"] else ""
+        src = f"<span style='color:{GREY}; font-size:10px;'> · {esc(it['source'])}</span>"
+        pnl_html = ""
+        if it["pnl"] is not None:
+            ps = "+" if it["pnl"] >= 0 else ""
+            pc = GREEN if it["pnl"] >= 0 else RED
+            pnl_html = f" | <span style='color:{pc};'>P&L {ps}{eur(it['pnl'])}</span>"
 
-    active_pac_items = [
-        item
-        for item in portfolio_items
-        if item["ticker"] not in st.session_state.pac_excluded
-    ]
+        if it["change"] is None:
+            chg_html = f"<span style='color:{GREY};'>—</span>"
+        else:
+            cs = "+" if it["change"] >= 0 else ""
+            cc = GREEN if it["change"] >= 0 else RED
+            chg_html = f"<span style='color:{cc};'>{cs}{it['change']:.2f}%</span>"
 
-    if not active_pac_items:
-      st.warning(
-          "Tutti i titoli sono stati esclusi dal PAC. Ripristina almeno un"
-          " titolo."
-      )
+        cols = st.columns([4.8, 1.5, 0.7], gap="small")
+        with cols[0]:
+            st.markdown(
+                f"""<div style="font-size: 13px; line-height: 1.3;">
+                <b>{esc(sym)}{badge}</b> <span style="color: {GREY}; font-size: 11px; margin-left: 4px;">{p_disp}</span>{src}<br>
+                <span style="font-size: 11px; color: #c9d1d9;">Qt: {it['qty']:g} | Tot: <b>{eur(it['valore'])}</b>{pnl_html}</span></div>""",
+                unsafe_allow_html=True,
+            )
+        with cols[1]:
+            st.markdown(
+                f"<div style='text-align:center; font-size:16px; font-weight:bold; padding-top:4px;'>{chg_html}</div>",
+                unsafe_allow_html=True,
+            )
+        with cols[2]:
+            if st.button("✏️", key=f"btn_edit_{sym}", help="Gestisci / Modifica"):
+                st.session_state[key_edit] = not st.session_state[key_edit]
+                st.rerun()
+
+        if st.session_state[key_edit]:
+            d = portfolio[sym]
+            e1, e2 = st.columns(2)
+            up_q = e1.number_input("Quantità / Lotti", value=float(d["qty"]), step=1.0, key=f"q_{sym}")
+            up_p = e2.number_input("Prezzo manuale (€ o %)", min_value=0.0, value=float(d["manual_price"]), step=0.01, key=f"p_{sym}")
+            e3, e4 = st.columns(2)
+            up_cost = e3.number_input("Prezzo medio carico (0 = n/d)", min_value=0.0, value=float(d["avg_cost"]), step=0.01, key=f"c_{sym}")
+            up_cls = e4.selectbox("Asset class", ASSET_CLASSES, index=ASSET_CLASSES.index(d["asset_class"]), key=f"k_{sym}")
+            up_force = st.checkbox("Usa sempre il prezzo manuale (ignora Yahoo)", value=d["force_manual"], key=f"f_{sym}")
+            up_coupon, up_mat = d.get("coupon"), d.get("maturity_year")
+            if d["is_bond"]:
+                b1, b2 = st.columns(2)
+                up_coupon = b1.number_input("Cedola %", min_value=0.0, value=float(d.get("coupon") or 0.0), step=0.05, key=f"cp_{sym}") or None
+                up_mat = int(b2.number_input("Anno scadenza", min_value=0, max_value=2100, value=int(d.get("maturity_year") or 0), step=1, key=f"mt_{sym}")) or None
+            s1, s2 = st.columns(2)
+            if s1.button("💾 Salva", key=f"save_{sym}", **STRETCH):
+                d.update({
+                    "qty": up_q, "manual_price": up_p, "avg_cost": up_cost,
+                    "asset_class": up_cls, "force_manual": up_force,
+                    "coupon": up_coupon, "maturity_year": up_mat,
+                })
+                save_json(PORTFOLIO_FILE, portfolio)
+                st.session_state[key_edit] = False
+                st.rerun()
+            if s2.button("🗑️ Elimina titolo", key=f"del_{sym}", **STRETCH):
+                del portfolio[sym]
+                for k in list(st.session_state.keys()):
+                    if k.endswith(f"_{sym}"):
+                        del st.session_state[k]
+                save_json(PORTFOLIO_FILE, portfolio)
+                st.rerun()
+
+        st.markdown("<hr style='margin: 4px 0; border-color: #21262d;'>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # Variabili condivise tra PAC e FIRE
+    mu = sigma = monthly_contrib = 0.0
+    model_ok = False
+
+    if not items:
+        st.info("Aggiungi almeno una posizione per usare i simulatori.")
     else:
-      raw_weights = {}
-      for item in active_pac_items:
-        sym = item["ticker"]
-        val = item["valore"]
-        default_pct = (
-            float((val / total_net_worth) * 100)
-            if total_net_worth > 0
-            else 0.0
-        )
+        # --- Simulatore PAC ---
+        with st.expander("📊 Simulazione PAC (Monte Carlo)"):
+            m1, m2, m3 = st.columns(3)
+            pac_amount = m1.number_input("Importo PAC (€)", min_value=0.0, value=300.0, step=50.0)
+            pac_freq = m2.selectbox("Frequenza", ["Mensile", "Settimanale", "Trimestrale"])
+            years = m3.number_input("Anni", min_value=1, max_value=40, value=20)
+            rho = st.slider(
+                "Correlazione media tra asset", 0.0, 1.0, 0.7, 0.05,
+                help="1 = si muovono tutti insieme (nessuna diversificazione); 0 = indipendenti.",
+            )
+            monthly_contrib = {
+                "Mensile": pac_amount,
+                "Settimanale": pac_amount * 52 / 12,
+                "Trimestrale": pac_amount / 3,
+            }[pac_freq]
 
-        cols_pw = st.columns([3.5, 0.5])
-        with cols_pw[0]:
-          raw_weights[sym] = st.number_input(
-              f"{sym} ({item['name'][:18]}...)",
-              min_value=0.0,
-              max_value=100.0,
-              value=default_pct,
-              step=1.0,
-              key=f"pac_w_{sym}",
-          )
-        with cols_pw[1]:
-          st.write("")
-          if st.button("❌", key=f"exc_pac_{sym}", help=f"Escludi {sym} dal PAC"):
-            st.session_state.pac_excluded.append(sym)
-            st.rerun()
+            st.markdown("##### Ripartizione del PAC")
+            st.caption("Spunta/deseleziona i titoli e modifica i pesi: vengono normalizzati a 100%.")
+            tickers = list(portfolio.keys())
+            base = pd.DataFrame({
+                "Ticker": tickers,
+                "Incluso": True,
+                "Peso %": [
+                    round(items_by_sym[t]["valore"] / total_net_worth * 100, 1) if total_net_worth > 0 else 0.0
+                    for t in tickers
+                ],
+            })
+            edited = st.data_editor(
+                base, hide_index=True, disabled=["Ticker"],
+                column_config={"Peso %": st.column_config.NumberColumn(min_value=0.0, max_value=100.0, step=1.0)},
+                key=f"pac_editor_{abs(hash(tuple(tickers)))}", **STRETCH,
+            )
+            sel = edited[edited["Incluso"] & (edited["Peso %"] > 0)]
+            total_w = float(sel["Peso %"].sum())
 
-      if st.session_state.pac_excluded:
-        st.info(
-            f"Titoli esclusi dal PAC: {', '.join(st.session_state.pac_excluded)}"
-        )
-        if st.button("🔄 Ripristina tutti i titoli esclusi"):
-          st.session_state.pac_excluded = []
-          st.rerun()
-
-      sum_raw = sum(raw_weights.values())
-      if sum_raw > 0:
-        pac_weights = {k: v / sum_raw for k, v in raw_weights.items()}
-      else:
-        pac_weights = {}
-
-      weighted_return = 0.0
-      weighted_vol = 0.0
-      for sym, w in pac_weights.items():
-        data = st.session_state.portfolio[sym]
-        is_bond = data.get("is_bond", False)
-        if is_bond:
-          name_str = data.get("name", "")
-          match = re.search(r"(\d+[\.,]?\d*)\s*%", name_str)
-          gross_coupon = (
-              float(match.group(1).replace(",", ".")) if match else 2.5
-          )
-          net_coupon = gross_coupon * 0.875
-          cur_price = data.get("manual_price", 0.0)
-          if cur_price <= 0:
-            cur_price = 100.0
-          r = (net_coupon / cur_price) if cur_price > 0 else 0.035
-          r = max(r, 0.02)
-          v = 0.06
-        elif "GOLD" in sym.upper():
-          r, v = 0.06, 0.15
-        else:
-          r, v = 0.08, 0.16
-        weighted_return += w * r
-        weighted_vol += w * v
-
-      monthly_contrib = (
-          pac_amount
-          if pac_freq == "Mensile"
-          else (pac_amount * 4 if pac_freq == "Settimanale" else pac_amount / 3)
-      )
-
-      if st.button("🚀 Avvia Simulazione (3.000 scenari)", type="secondary"):
-        if not pac_weights:
-          st.warning("Seleziona una percentuale valida per i titoli del PAC.")
-        else:
-          np.random.seed(42)
-          n_sims = 3000
-          months = int(years * 12)
-          dt = 1 / 12
-          simulations = np.zeros((months, n_sims))
-          simulations[0, :] = total_net_worth
-
-          for m in range(1, months):
-            rand_normals = np.random.normal(0, 1, n_sims)
-            growth = (
-                simulations[m - 1, :]
-                * (
-                    1
-                    + weighted_return * dt
-                    + weighted_vol * np.sqrt(dt) * rand_normals
+            if total_w <= 0:
+                st.warning("Seleziona almeno un titolo con peso maggiore di zero.")
+            else:
+                weights = {r["Ticker"]: r["Peso %"] / total_w for _, r in sel.iterrows()}
+                mu, sigma = portfolio_stats(weights, items_by_sym, portfolio, rho)
+                model_ok = True
+                st.caption(
+                    f"Ipotesi del modello: rendimento atteso {mu * 100:.1f}% annuo,"
+                    f" volatilità {sigma * 100:.1f}% annua. Sono ipotesi, non previsioni."
+                    " (Rendimenti per asset class in cima al codice.)"
                 )
-                + monthly_contrib
-            )
-            simulations[m, :] = growth
 
-          pessimistic = np.percentile(simulations, 10, axis=1)
-          neutral = np.percentile(simulations, 50, axis=1)
-          optimistic = np.percentile(simulations, 90, axis=1)
-          invested_capital = [
-              total_net_worth + (monthly_contrib * m) for m in range(months)
-          ]
+                paths = run_monte_carlo(total_net_worth, monthly_contrib, mu, sigma, years)
+                p10, p50, p90 = (np.percentile(paths, q, axis=1) for q in (10, 50, 90))
+                months = paths.shape[0] - 1
+                invested = total_net_worth + monthly_contrib * np.arange(months + 1)
 
-          col_res1, col_res2, col_res3 = st.columns(3)
-          col_res1.metric(
-              "Pessimista (10° perc.)",
-              f"{pessimistic[-1]:,.0f} €".replace(",", "."),
-          )
-          col_res2.metric(
-              "Neutro (Mediana)", f"{neutral[-1]:,.0f} €".replace(",", ".")
-          )
-          col_res3.metric(
-              "Ottimista (90° perc.)",
-              f"{optimistic[-1]:,.0f} €".replace(",", "."),
-          )
+                r1, r2, r3 = st.columns(3)
+                r1.metric("Pessimista (10° perc.)", eur(p10[-1]))
+                r2.metric("Neutro (mediana)", eur(p50[-1]))
+                r3.metric("Ottimista (90° perc.)", eur(p90[-1]))
 
-          fig = go.Figure()
-          x_axis = np.arange(months) / 12
-          fig.add_trace(
-              go.Scatter(
-                  x=x_axis,
-                  y=optimistic,
-                  mode="lines",
-                  name="Ottimista (90°)",
-                  line=dict(color="#238636"),
-              )
-          )
-          fig.add_trace(
-              go.Scatter(
-                  x=x_axis,
-                  y=neutral,
-                  mode="lines",
-                  name="Neutro (50°)",
-                  line=dict(color="#1f6feb", width=3),
-              )
-          )
-          fig.add_trace(
-              go.Scatter(
-                  x=x_axis,
-                  y=pessimistic,
-                  mode="lines",
-                  name="Pessimista (10°)",
-                  line=dict(color="#da3633"),
-              )
-          )
-          fig.add_trace(
-              go.Scatter(
-                  x=x_axis,
-                  y=invested_capital,
-                  mode="lines",
-                  name="Capitale Versato",
-                  line=dict(dash="dash", color="#8b9499"),
-              )
-          )
+                x = np.arange(months + 1) / 12
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=x, y=p90, name="Ottimista (90°)", line=dict(color="#238636")))
+                fig.add_trace(go.Scatter(x=x, y=p50, name="Neutro (50°)", line=dict(color="#1f6feb", width=3)))
+                fig.add_trace(go.Scatter(x=x, y=p10, name="Pessimista (10°)", line=dict(color="#da3633")))
+                fig.add_trace(go.Scatter(x=x, y=invested, name="Capitale versato", line=dict(dash="dash", color=GREY)))
+                fig.update_layout(
+                    template="plotly_dark", paper_bgcolor="#161b22", plot_bgcolor="#161b22",
+                    xaxis_title="Anni", yaxis_title="Valore (€)",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                    margin=dict(t=30, b=10, l=10, r=10),
+                )
+                st.plotly_chart(fig, **STRETCH)
+                st.caption("3.000 scenari, rendimenti log-normali, versamento a inizio mese, valori nominali (non corretti per inflazione).")
 
-          fig.update_layout(
-              template="plotly_dark",
-              paper_bgcolor="#161b22",
-              plot_bgcolor="#161b22",
-              xaxis_title="Anni",
-              yaxis_title="Valore (€)",
-              legend=dict(
-                  orientation="h",
-                  yanchor="bottom",
-                  y=1.02,
-                  xanchor="right",
-                  x=1,
-              ),
-          )
-          st.plotly_chart(fig, use_container_width=True)
+        # --- Simulatore FIRE ---
+        with st.expander("🔥 Simulatore FIRE"):
+            if not model_ok:
+                st.info("Imposta prima una ripartizione valida nel simulatore PAC (qui sopra).")
+            else:
+                f1, f2, f3 = st.columns(3)
+                fire_exp = f1.number_input("Spesa mensile desiderata (€)", min_value=0.0, value=1150.0, step=50.0, key="fire_exp")
+                age = f2.number_input("Età attuale", min_value=18, max_value=90, value=30, key="fire_age")
+                swr = float(f3.selectbox("Prelievo sicuro (SWR)", ["4%", "3.5%", "3%"], key="fire_swr").rstrip("%")) / 100.0
 
-      st.markdown("<br>", unsafe_allow_html=True)
+                i1, i2, i3 = st.columns(3)
+                use_inf = i1.checkbox("Includi inflazione", value=True, key="fire_use_inf")
+                inf_rate = i2.number_input("Inflazione annua (%)", min_value=0.0, max_value=10.0, value=2.0, step=0.1, key="fire_inf", disabled=not use_inf)
+                scen = i3.selectbox("Scenario", ["Neutro (Mediana)", "Pessimista (10°)", "Ottimista (90°)"], key="fire_scen")
 
-      # Pulsante per visibilità Simulatore FIRE
-      if st.button(
-          "🔥 Mostra/Nascondi Simulatore FIRE",
-          type="secondary",
-          use_container_width=True,
-      ):
-        st.session_state.show_fire = not st.session_state.show_fire
-        st.rerun()
+                z = {"Pessimista (10°)": -1.2816, "Neutro (Mediana)": 0.0, "Ottimista (90°)": 1.2816}[scen]
+                # Rendimento geometrico atteso, spostato di z deviazioni standard
+                # su un orizzonte di riferimento di 20 anni (coerente con la mediana del PAC).
+                eff = (mu - 0.5 * sigma ** 2) + z * sigma / np.sqrt(20)
 
-      if st.session_state.show_fire:
-        st.markdown(
-            "### 🔥 Simulatore FIRE (Financial Independence, Retire Early)"
-        )
-        f_col1, f_col2, f_col3 = st.columns(3)
-        with f_col1:
-          fire_monthly_exp = st.number_input(
-              "Spesa mensile des. (€)",
-              value=1150.0,
-              step=50.0,
-              key="fire_exp",
-          )
-        with f_col2:
-          current_age = st.number_input(
-              "Età attuale", min_value=18, max_value=90, value=30, key="fire_age"
-          )
-        with f_col3:
-          swr = (
-              st.selectbox(
-                  "Prelievo sicuro (SWR)", ["4%", "3.5%", "3%"], key="fire_swr"
-              )
-              .replace("%", "")
-              .strip()
-          )
-          swr_val = float(swr) / 100.0
+                inf = inf_rate / 100.0 if use_inf else 0.0
+                base_target = fire_exp * 12 / swr
+                val, reached, months_needed, target_at = total_net_worth, False, 0, base_target
 
-        fc_inf1, fc_inf2, fc_scen = st.columns(3)
-        with fc_inf1:
-          use_inflation = st.checkbox(
-              "Includi inflazione stimata", value=True, key="fire_use_inf"
-          )
-        with fc_inf2:
-          inflation_rate = (
-              st.number_input(
-                  "Inflazione annua (%)",
-                  min_value=0.0,
-                  max_value=10.0,
-                  value=2.0,
-                  step=0.1,
-                  key="fire_inf_rate",
-              )
-              if use_inflation
-              else 0.0
-          )
-        with fc_scen:
-          scenario_choice = st.selectbox(
-              "Scenario Rendimento",
-              ["Neutro (Mediana)", "Pessimista (10°)", "Ottimista (90°)"],
-              key="fire_scenario",
-          )
+                if val >= base_target:
+                    reached = True
+                else:
+                    for m in range(1, 12 * 70 + 1):
+                        val = (val + monthly_contrib) * (1 + eff / 12.0)
+                        tgt = base_target * (1 + inf) ** (m / 12.0)
+                        if val >= tgt:
+                            reached, months_needed, target_at = True, m, tgt
+                            break
 
-        # Pulsante dedicato al calcolo/aggiornamento del FIRE
-        if st.button("🔥 Calcola Obiettivo FIRE", type="primary"):
-          if "Pessimista" in scenario_choice:
-            eff_return = weighted_return - weighted_vol
-          elif "Ottimista" in scenario_choice:
-            eff_return = weighted_return + weighted_vol
-          else:
-            eff_return = weighted_return
+                if use_inf and reached and months_needed > 0:
+                    st.markdown(f"#### 🎯 FIRE Number a quella data: **{eur(target_at)}**")
+                    st.caption(f"In euro di oggi: {eur(base_target)}. Rendimento ipotizzato: {eff * 100:.1f}% annuo.")
+                else:
+                    st.markdown(f"#### 🎯 FIRE Number: **{eur(base_target)}**")
+                    st.caption(f"Rendimento ipotizzato: {eff * 100:.1f}% annuo.")
 
-          inf_val = (inflation_rate / 100.0) if use_inflation else 0.0
-          base_fire_target = fire_monthly_exp * 12 * (1.0 / swr_val)
+                if reached:
+                    yrs = months_needed / 12.0
+                    st.success(f"🎉 [{scen}] Traguardo FIRE tra **{yrs:.1f} anni** (a **{age + yrs:.1f} anni**).")
+                    prog = min(1.0, total_net_worth / target_at) if target_at > 0 else 1.0
+                    st.progress(prog, text=f"Progresso attuale: {eur(total_net_worth)} / {eur(target_at)} ({prog * 100:.1f}%)")
+                else:
+                    st.warning(f"Con lo scenario [{scen}] e il PAC impostato servono più di 70 anni. Prova ad aumentare il PAC.")
 
-          val = total_net_worth
-          months_needed = 0
-          reached = False
-          target_at_reach = base_fire_target
-
-          if val >= base_fire_target:
-            reached = True
-            months_needed = 0
-          else:
-            for m in range(1, 12 * 70):
-              cur_target = base_fire_target * ((1 + inf_val) ** (m / 12.0))
-              val = val * (1 + (eff_return / 12.0)) + monthly_contrib
-              if val >= cur_target:
-                months_needed = m
-                target_at_reach = cur_target
-                reached = True
-                break
-
-          if use_inflation:
-            st.markdown(
-                f"#### 🎯 Tuo FIRE Number target (in valuta futura):"
-                f" **{target_at_reach:,.0f} €**"
-            )
-            st.caption(
-                f"Capitale in valuta attuale (senza inflazione):"
-                f" {base_fire_target:,.0f} €"
-            )
-          else:
-            st.markdown(
-                f"#### 🎯 Tuo FIRE Number target: **{base_fire_target:,.0f} €**"
-            )
-
-          if reached:
-            years_needed = months_needed / 12.0
-            retire_age = current_age + years_needed
-            success_msg = (
-                f"🎉 [{scenario_choice}] Raggiungeresti il traguardo FIRE tra"
-                f" **{years_needed:.1f} anni** (all'età di **{retire_age:.1f}"
-                " anni**)!"
-            )
-            st.success(success_msg)
-
-            progress_pct = min(1.0, total_net_worth / target_at_reach)
-            st.progress(
-                progress_pct,
-                text=(
-                    f"Progresso attuale: {total_net_worth:,.0f} € /"
-                    f" {target_at_reach:,.0f} € ({progress_pct*100:.1f}%)"
-                ),
-            )
-          else:
-            st.warning(
-                f"Con lo scenario [{scenario_choice}] e il PAC impostato, il"
-                " traguardo FIRE richiede più di 70 anni. Prova ad aumentare"
-                " l'importo del PAC."
-            )
-
-# 3. TAB ANALISI
+# ----------------------------------------------------------------------------
+# 3. ANALISI
+# ----------------------------------------------------------------------------
 with tab_analisi:
-  st.markdown(
-      '<div style="background: linear-gradient(135deg, #7c3aed, #4c1d95);'
-      ' padding: 20px; border-radius: 10px; margin-bottom: 15px;"><h1'
-      ' style="color: white; margin: 0; font-size: 24px;">Analisi Portafoglio</h1><p'
-      ' style="color: #ede9fe; margin: 5px 0 0 0; font-size: 13px;">Suddivisione'
-      ' percentuale e livello di bilanciamento</p></div>',
-      unsafe_allow_html=True,
-  )
-
-  if total_net_worth > 0 and portfolio_items:
-    df_analysis = pd.DataFrame(portfolio_items)
-
-
-    def classify_asset(row):
-      s = row["ticker"].upper()
-      if row["is_bond"] or "BTP" in s or "BOND" in s:
-        return "Obbligazioni / BTP"
-      elif "GOLD" in s:
-        return "Materie Prime (Oro)"
-      elif "SWDA" in s or "ACT" in s or "WLD" in s:
-        return "Azionario Globale"
-      elif "USA" in s or "NDX" in s or "2K" in s:
-        return "Azionario USA"
-      elif "XMME" in s:
-        return "Azionario Emergenti"
-      else:
-        return "Azionario / Altro"
-
-
-    df_analysis["Macro"] = df_analysis.apply(classify_asset, axis=1)
-
-    st.subheader("📊 Ripartizione per Ticker")
-    fig_ticker = px.pie(
-        df_analysis,
-        names="ticker",
-        values="valore",
-        hole=0.4,
-        color_discrete_sequence=px.colors.qualitative.Prism,
+    st.markdown(
+        '<div style="background: linear-gradient(135deg, #7c3aed, #4c1d95); padding: 20px; border-radius: 10px; margin-bottom: 15px;">'
+        '<h1 style="color: white; margin: 0; font-size: 24px;">Analisi Portafoglio</h1>'
+        '<p style="color: #ede9fe; margin: 5px 0 0 0; font-size: 13px;">Suddivisione e bilanciamento</p></div>',
+        unsafe_allow_html=True,
     )
-    fig_ticker.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="#161b22",
-        plot_bgcolor="#161b22",
-        margin=dict(t=10, b=10, l=10, r=10),
-    )
-    st.plotly_chart(fig_ticker, use_container_width=True)
+    if total_net_worth > 0:
+        df = pd.DataFrame(items)
+        df = df[df["valore"] > 0]
 
-    st.subheader("🌍 Ripartizione per Macro-Asset")
-    macro_grouped = (
-        df_analysis.groupby("Macro")["valore"].sum().reset_index()
-    )
-    fig_macro = px.pie(
-        macro_grouped,
-        names="Macro",
-        values="valore",
-        hole=0.4,
-        color_discrete_sequence=px.colors.qualitative.Safe,
-    )
-    fig_macro.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="#161b22",
-        plot_bgcolor="#161b22",
-        margin=dict(t=10, b=10, l=10, r=10),
-    )
-    st.plotly_chart(fig_macro, use_container_width=True)
+        def pie(names, values_df, palette):
+            fig = px.pie(values_df, names=names, values="valore", hole=0.4, color_discrete_sequence=palette)
+            fig.update_layout(template="plotly_dark", paper_bgcolor="#161b22", plot_bgcolor="#161b22", margin=dict(t=10, b=10, l=10, r=10))
+            return fig
 
-    st.markdown("---")
-    st.subheader("⚖️ Controllo Bilanciamento e Sovraesposizione")
+        st.subheader("📊 Ripartizione per ticker")
+        st.plotly_chart(pie("ticker", df, px.colors.qualitative.Prism), **STRETCH)
 
-    max_asset = df_analysis.loc[df_analysis["valore"].idxmax()]
-    max_pct = (max_asset["valore"] / total_net_worth) * 100
+        st.subheader("🌍 Ripartizione per asset class")
+        grouped = df.groupby("asset_class", as_index=False)["valore"].sum()
+        st.plotly_chart(pie("asset_class", grouped, px.colors.qualitative.Safe), **STRETCH)
 
-    if max_pct > 35:
-      st.warning(
-          f"⚠️ **Attenzione alla concentrazione:** Il titolo"
-          f" **{max_asset['ticker']}** rappresenta il **{max_pct:.1f}%** del"
-          " tuo portafoglio totale. Una percentuale superiore al 35% su un"
-          " singolo strumento aumenta la sovraesposizione e la volatilità."
-      )
+        st.markdown("---")
+        st.subheader("⚖️ Bilanciamento")
+        top = df.loc[df["valore"].idxmax()]
+        top_pct = top["valore"] / total_net_worth * 100
+        if top_pct > 35:
+            st.warning(f"⚠️ **{top['ticker']}** pesa il **{top_pct:.1f}%** del portafoglio: concentrazione sopra la soglia del 35%.")
+        else:
+            st.success("✅ Nessun singolo titolo supera il 35% del patrimonio.")
+
+        eq = grouped[grouped["asset_class"].str.startswith("Azionario")]["valore"].sum()
+        bd = grouped[grouped["asset_class"] == BOND]["valore"].sum()
+        cm = grouped[grouped["asset_class"] == "Materie Prime (Oro)"]["valore"].sum()
+        st.info(
+            f"💡 Azionario ~{eq / total_net_worth * 100:.1f}% | Obbligazionario"
+            f" ~{bd / total_net_worth * 100:.1f}% | Materie prime ~{cm / total_net_worth * 100:.1f}%"
+        )
     else:
-      st.success(
-          "✅ **Portafoglio ben diversificato:** Nessun singolo titolo supera"
-          " la soglia di guardia del 35% del patrimonio totale."
-      )
+        st.info("Aggiungi almeno una posizione con un prezzo valido per vedere l'analisi.")
 
-    bond_val = df_analysis[df_analysis["Macro"] == "Obbligazioni / BTP"][
-        "valore"
-    ].sum()
-    bond_pct = (bond_val / total_net_worth) * 100
-    equity_pct = 100.0 - bond_pct
-
-    st.info(
-        f"💡 **Asset Allocation:** Azionario ~{equity_pct:.1f}% | Obbligazionario"
-        f" / Altro ~{bond_pct:.1f}%"
-    )
-
-  else:
-    st.info("Aggiungi almeno una posizione nel portafoglio per vedere l'analisi.")
-
-# 4. TAB WATCHLIST
+# ----------------------------------------------------------------------------
+# 4. WATCHLIST
+# ----------------------------------------------------------------------------
 with tab_watchlist:
-  st.markdown(
-      '<div style="background: linear-gradient(135deg, #d97706, #78350f);'
-      ' padding: 20px; border-radius: 10px; margin-bottom: 15px;"><h1'
-      ' style="color: white; margin: 0; font-size: 24px;">Watchlist</h1><p'
-      ' style="color: #fef3c7; margin: 5px 0 0 0; font-size: 13px;">Monitora'
-      ' i titoli di tuo interesse</p></div>',
-      unsafe_allow_html=True,
-  )
+    st.markdown(
+        '<div style="background: linear-gradient(135deg, #d97706, #78350f); padding: 20px; border-radius: 10px; margin-bottom: 15px;">'
+        '<h1 style="color: white; margin: 0; font-size: 24px;">Watchlist</h1>'
+        '<p style="color: #fef3c7; margin: 5px 0 0 0; font-size: 13px;">Monitora i titoli di tuo interesse</p></div>',
+        unsafe_allow_html=True,
+    )
+    wls = st.session_state.watchlists
+    if st.session_state.get("wl_warning"):
+        st.warning(st.session_state.wl_warning)
 
-  selected_wl = st.selectbox(
-      "Seleziona Lista", list(st.session_state.watchlists.keys())
-  )
+    selected = st.selectbox("Seleziona lista", list(wls.keys()))
 
-  with st.form("add_wl_form"):
-    col_w1, col_w2 = st.columns([3, 1])
-    with col_w1:
-      new_wl_ticker = st.text_input("Aggiungi Ticker (es. BTP-2067, TSLA)")
-    with col_w2:
-      submitted_wl = st.form_submit_button("Aggiungi")
-      if submitted_wl and new_wl_ticker:
-        if (
-            new_wl_ticker.upper()
-            not in st.session_state.watchlists[selected_wl]
-        ):
-          st.session_state.watchlists[selected_wl].append(
-              new_wl_ticker.upper()
-          )
-          st.rerun()
+    with st.expander("Nuova lista"):
+        with st.form("new_list_form", clear_on_submit=True):
+            nl = st.text_input("Nome lista")
+            if st.form_submit_button("Crea") and nl.strip() and nl.strip() not in wls:
+                wls[nl.strip()] = []
+                save_json(WATCHLIST_FILE, wls)
+                st.rerun()
 
-  for sym in st.session_state.watchlists[selected_wl]:
-    price, change = get_ticker_data(sym)
-    p_str = f"{price:,.2f} €" if price else "n.d."
-    c_val = change if change is not None else 0.0
-    c_sign = "+" if c_val >= 0 else ""
-    c_col = "#3fb950" if c_val >= 0 else "#f85149"
+    with st.form("add_wl_form", clear_on_submit=True):
+        cw1, cw2 = st.columns([3, 1])
+        t_new = cw1.text_input("Aggiungi ticker Yahoo (es. TSLA, SWDA.MI)")
+        if cw2.form_submit_button("Aggiungi") and t_new.strip():
+            t = t_new.upper().strip()
+            if t not in wls[selected]:
+                wls[selected].append(t)
+                save_json(WATCHLIST_FILE, wls)
+                st.rerun()
 
-    cols_w = st.columns([3.4, 0.6])
-    with cols_w[0]:
-      st.markdown(
-          f'<div style="background-color: #161b22; padding: 10px 12px;'
-          ' border-radius: 8px; border: 1px solid #30363d; display: flex;'
-          f' justify-content: space-between; align-items: center;"><div><b>{sym}</b></div><div'
-          f' style="text-align: right;"><b>{p_str}</b><br><span'
-          f' style="color: {c_col}; font-weight: bold; font-size:'
-          f' 11px;">{c_sign}{c_val:.2f}%</span></div></div>',
-          unsafe_allow_html=True,
-      )
-    with cols_w[1]:
-      if st.button("❌", key=f"del_wl_{sym}", help="Rimuovi"):
-        st.session_state.watchlists[selected_wl].remove(sym)
-        st.rerun()
+    wq, _ = fetch_quotes(tuple(wls[selected]))
+    for sym in list(wls[selected]):
+        q = wq.get(sym.upper())
+        if q:
+            csym = CCY_SYMBOL.get(q.get("currency"), q.get("currency") or "")
+            p_str = f"{q['price']:,.2f} {csym}".strip()
+            c = q["change"]
+            c_col = GREEN if c >= 0 else RED
+            c_html = f"{'+' if c >= 0 else ''}{c:.2f}%"
+        else:
+            p_str, c_col, c_html = "n.d.", GREY, "—"
+        cw = st.columns([3.4, 0.6])
+        with cw[0]:
+            st.markdown(
+                f'<div style="background-color: #161b22; padding: 10px 12px; border-radius: 8px; border: 1px solid #30363d;'
+                f' display: flex; justify-content: space-between; align-items: center;"><div><b>{esc(sym)}</b></div>'
+                f'<div style="text-align: right;"><b>{esc(p_str)}</b><br>'
+                f'<span style="color: {c_col}; font-weight: bold; font-size: 11px;">{c_html}</span></div></div>',
+                unsafe_allow_html=True,
+            )
+        with cw[1]:
+            if st.button("❌", key=f"del_wl_{selected}_{sym}", help="Rimuovi"):
+                wls[selected].remove(sym)
+                save_json(WATCHLIST_FILE, wls)
+                st.rerun()
